@@ -21,6 +21,13 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     """
-    聊天响应消息
+    结构化的 AI 回复。intent 决定这条回复归到哪一类问题，answer 是真正要展示给终端用户的文本，confidence 和 need_human 共同决定客服要不要介入，suggested_actions 只给客服看，不会出现在任何可见的界面上。
     """
-    reply: str
+    intent: Literal["order_issue", "account_issue", "refund_request",
+                    "general_inquiry", "other"] = Field(description="用户问题所属的业务类型")
+    answer: str = Field(description="面向用户展示的回答")
+    confidence: float = Field(
+        ge=0, le=1, description="AI 对本次判断的置信度，取值范围 0 到 1")
+    need_human: bool = Field(description="是否建议转人工处理")
+    suggested_actions: list[str] = Field(
+        default_factory=list, description="给客服的后续操作建议，不展示给终端用户")

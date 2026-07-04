@@ -62,6 +62,7 @@ function handleKeydown(event: KeyboardEvent) {
     color: #fff;
     cursor: pointer;
 }
+
 .send-button:disabled {
     background-color: #93c5fd;
     cursor: not-allowed;
