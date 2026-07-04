@@ -22,7 +22,11 @@ const emit = defineEmits<{
         <div class="confidence-row">
             <span class="confidence-label">置信度 {{ Math.round(message.confidence * 100) }}%</span>
             <div class="confidence-bar">
-                <div class="confidence-fill" :style="{ width: `${message.confidence < 0.6}` }" />
+                <div
+                    class="confidence-fill"
+                    :class="{ low: message.confidence < 0.6 }"
+                    :style="{ width: `${message.confidence * 100}%` }"
+                />
             </div>
         </div>
         <SuggestedActions :actions="message.suggestedActions" @select="emit('selectAction', $event)" />
