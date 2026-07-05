@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { ToolCall } from '../../api/chat'
-import OrderInforCard from '../business/OrderInforCard.vue'
+import OrderInfoCard from '../business/OrderInfoCard.vue'
 
 defineProps<{
     toolCall: ToolCall
@@ -23,7 +23,7 @@ const ARG_LABEL: Record<string, string> = {
         <div v-if="toolCall.status === 'calling'" class="tool-call-args">
             {{ ARG_LABEL[toolCall.name] ?? '参数' }}：{{ Object.values(toolCall.args)[0] }}
         </div>
-        <OrderInforCard v-else-if="toolCall.name === 'query_order' && toolCall.result" :order="toolCall.result" />
+        <OrderInfoCard v-else-if="toolCall.name === 'query_order' && toolCall.result" :order="toolCall.result" />
     </div>
 </template>
 

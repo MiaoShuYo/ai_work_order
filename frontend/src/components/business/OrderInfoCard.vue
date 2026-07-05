@@ -35,7 +35,39 @@ const hasError = computed(() => typeof props.order.error === 'string')
         <div class="order-row">
             <span class="order-label">支付状态</span>
             <span>{{ payStatus }}</span>
+        </div>
+        <div class="order-row">
+            <span class="order-label">物流状态</span>
+            <span>{{ logisticsStatus }}</span>
+        </div>
     </div>
 </template>
 
-<style scoped></style>
+<style scoped>
+.order-card {
+    margin-top: 4px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background-color: #fff;
+    border: 1px solid #e5e7eb;
+}
+
+.order-card-error {
+    color: #dc2626;
+}
+
+.order-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 2px 0;
+    font-size: 13px;
+}
+
+.order-label {
+    color: #6b7280;
+}
+
+.order-status {
+    font-weight: 600;
+}
+</style>
