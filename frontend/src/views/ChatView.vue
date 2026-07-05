@@ -46,7 +46,11 @@ async function handleSend(text: string) {
                 }
             },
             onFinal(finalMessage) {
-                Object.assign(pendingMessage, finalMessage, { pending: false })
+                // 找到占位消息在数组中的索引，用新消息替换它以触发 Vue 响应式更新
+                const index = messages.value.indexOf(pendingMessage)
+                if (index !== -1) {
+                    messages.value[index] = { ...finalMessage, pending: false }
+                }
             },
             onError(message) {
                 errorMessage.value = message

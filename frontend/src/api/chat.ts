@@ -93,15 +93,9 @@ export async function streamChatMessage(history: ChatMessage[], handlers: Stream
     // SSE 事件块之间用连续两个换行符分割，但网络分片不保证一个 chunk 刚好落在事件边界上，所以要维护一个缓冲区，每次追加新内容后按分割符分割，切不完整的尾巴留到下一次 chunk 再拼。
     let buffer = ''
 
-    while (true) {
-        const { done, value } = await reader.read()
-        if (done) {
-            break
-        }
-
-        buffer += decoder.decode(value, { stream: true })
-        const events = buffer.split('\n\n')
-        buffer = events.pop() ?? ''
+    function processBuffer(fullBuffer: string): string {
+        const events = fullBuffer.split('\n\n')
+        const remainder = events.pop() ?? ''
 
         for (const rawEvent of events) {
             const dataLine = rawEvent.split('\n').find((line) => line.startsWith('data: '))
@@ -137,5 +131,19 @@ export async function streamChatMessage(history: ChatMessage[], handlers: Stream
                     break
             }
         }
+
+        return remainder
+    }
+
+    while (true) {
+        const { done, value } = await reader.read()
+        if (done) {
+            // 流结束时处理缓冲区中可能残留的最后一个事件
+            processBuffer(buffer)
+            break
+        }
+
+        buffer += decoder.decode(value, { stream: true })
+        buffer = processBuffer(buffer)
     }
 }
