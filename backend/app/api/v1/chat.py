@@ -1,13 +1,24 @@
-from fastapi import APIRouter,HTTPException
-from app.agents.llm_client import call_llm
-from app.schemas.chat import ChatRequest,ChatResponse
+import json
+
+from fastapi import APIRouter
+from fastapi.responses import StreamingResponse
+
+from app.agents.llm_client import stream_chat
+from app.schemas.chat import ChatRequest
 
 router = APIRouter()
 
-@router.post("/chat",response_model=ChatResponse)
-async def send_message(request:ChatRequest)->ChatResponse:
-    try:
-        return await call_llm([message.model_dump() for message in request.messages])
-    except Exception as exc:
-        # 除了昨天已有的网络、密钥、限流这些原因，结构化输出还可能因为模型没有按 schema 生成合法 JSON 而抛出校验错误，这里统一按 502 处理，后续如果要单独区分"解析失败"和"上游服务不可用"，可以在这里拆分异常类型。
-        raise HTTPException(status_code=502,detail="调用大模型服务失败") from exc
+
+async def _to_sse(messages: list[dict[str, str]]):
+    """
+    把 stream_chat 产出的事件字典逐个格式化成 SSE 要求的 event/data 文本块。
+    """
+    async for event in stream_chat(messages):
+        event_type = event["type"]
+        yield f"event: {event_type}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+
+@router.post("/chat")
+async def send_message(request: ChatRequest) -> StreamingResponse:
+    payload = [message.model_dump() for message in request.messages]
+    return StreamingResponse(_to_sse(payload), media_type="text/event-stream")

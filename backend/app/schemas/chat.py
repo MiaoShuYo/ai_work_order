@@ -19,9 +19,23 @@ class ChatRequest(BaseModel):
     messages: list[ChatMessage] = Field(min_length=1)
 
 
+class ToolCallResult(BaseModel):
+    """
+    一次工具调用的完整记录，args 和 result 都是原始 dict，方便前端直接渲染成卡片。
+    """
+    name: str = Field(description="被调用的工具名")
+    args: dict = Field(description="调用工具时传入的参数")
+    result: dict = Field(description="工具返回的结果")
+
+
 class ChatResponse(BaseModel):
     """
-    结构化的 AI 回复。intent 决定这条回复归到哪一类问题，answer 是真正要展示给终端用户的文本，confidence 和 need_human 共同决定客服要不要介入，suggested_actions 只给客服看，不会出现在任何可见的界面上。
+    结构化的 AI 回复。
+    intent 决定这条回复归到哪一类问题；
+    answer 是真正要展示给终端用户的文本；
+    confidence 和 need_human 共同决定客服要不要介入；
+    suggested_actions 只给客服看，不会出现在任何可见的界面上；
+    tool_calls 记录这轮对话里实际发生过的工具调用，由后端在执行完工具后拼装，不依赖模型在最终回答里复述调用细节。
     """
     intent: Literal["order_issue", "account_issue", "refund_request",
                     "general_inquiry", "other"] = Field(description="用户问题所属的业务类型")
@@ -31,3 +45,5 @@ class ChatResponse(BaseModel):
     need_human: bool = Field(description="是否建议转人工处理")
     suggested_actions: list[str] = Field(
         default_factory=list, description="给客服的后续操作建议，不展示给终端用户")
+    tool_calls: list[ToolCallResult] = Field(
+        default_factory=list, description="本轮对话实际发生的工具调用记录")
