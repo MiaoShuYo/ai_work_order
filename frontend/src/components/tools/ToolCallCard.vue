@@ -1,30 +1,33 @@
 <script setup lang="ts">
 import type { ToolCall } from '../../api/chat'
-import OrderInfoCard from '../business/OrderInfoCard.vue'
+import ToolResultDetail from './ToolResultDetail.vue'
 
 defineProps<{
-    toolCall: ToolCall
+  toolCall: ToolCall
 }>()
 
 // 目前只有订单查询这一个工具，这里按工具名做一次映射，后面接入工单、用户、知识库等更多工具之后，这回映射会扩成一张“工具->参数展示文案”的表
 const ARG_LABEL: Record<string, string> = {
-    query_order: '订单号'
+  query_order: '订单号',
+  query_ticket: '工单号',
+  query_user: '用户 ID',
+  search_knowledge_base: '检索关键词',
 }
 
 </script>
 
 <template>
-    <div class="tool-call-card">
-        <div class="tool-call-header">
-            <span class="tool-call-icon">🔧</span>
-            <span v-if="toolCall.status === 'calling'">AI 正在调用工具：{{ toolCall.name }}</span>
-            <span v-else>工具调用完成：{{ toolCall.name }}</span>
-        </div>
-        <div v-if="toolCall.status === 'calling'" class="tool-call-args">
-            {{ ARG_LABEL[toolCall.name] ?? '参数' }}：{{ Object.values(toolCall.args)[0] }}
-        </div>
-        <OrderInfoCard v-else-if="toolCall.name === 'query_order' && toolCall.result" :order="toolCall.result" />
+  <div class="tool-call-card">
+    <div class="tool-call-header">
+      <span class="tool-call-icon">🔧</span>
+      <span v-if="toolCall.status === 'calling'">AI 正在调用工具：{{ toolCall.name }}</span>
+      <span v-else>工具调用完成：{{ toolCall.name }}</span>
     </div>
+    <div v-if="toolCall.status === 'calling'" class="tool-call-args">
+      {{ ARG_LABEL[toolCall.name] ?? '参数' }}：{{ Object.values(toolCall.args)[0] }}
+    </div>
+    <ToolResultDetail v-else-if="toolCall.result" :name="toolCall.name" :result="toolCall.result" />
+  </div>
 </template>
 
 <style scoped>

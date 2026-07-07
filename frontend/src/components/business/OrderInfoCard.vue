@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 
 const props = defineProps<{
-    order: Record<string, unknown>
+    data: Record<string, unknown>
 }>()
 
 const STATUS_COLOR: Record<string, string> = {
@@ -13,16 +13,16 @@ const STATUS_COLOR: Record<string, string> = {
 }
 
 // order 来自工具返回的原始 JSON，类型是 Record<string, unknown>，后端已经用 OrderInfo 这个 Pydantic 模型校验过字段是否合法，前端这里只需要按约定的 key 读取并转成字符串展示，不需要再重复做一遍业务校验。
-const orderNo = computed(() => String(props.order.order_no ?? ''))
-const status = computed(() => String(props.order.status ?? ''))
-const payStatus = computed(() => String(props.order.pay_status ?? ''))
-const logisticsStatus = computed(() => String(props.order.logistics_status ?? ''))
-const hasError = computed(() => typeof props.order.error === 'string')
+const orderNo = computed(() => String(props.data.order_no ?? ''))
+const status = computed(() => String(props.data.status ?? ''))
+const payStatus = computed(() => String(props.data.pay_status ?? ''))
+const logisticsStatus = computed(() => String(props.data.logistics_status ?? ''))
+const hasError = computed(() => typeof props.data.error === 'string')
 
 </script>
 
 <template>
-    <div v-if="hasError" class="order-card order-card-error">{{ order.error }}</div>
+    <div v-if="hasError" class="order-card order-card-error">{{ data.error }}</div>
     <div v-else class="order-card">
         <div class="order-row">
             <span class="order-label">订单号</span>
