@@ -1,17 +1,18 @@
 <script setup lang="ts">
 import { onMounted } from 'vue';
 import { useDocumentsStore } from '../../stores/documents';
+import IndexStatusTag from './IndexStatusTag.vue';
+import DocumentProcessLog from './DocumentProcessLog.vue';
 
 const store = useDocumentsStore()
-
-const STATUS_COLOR: Record<string, string> = {
-    处理中: '#f59e0b',
-    已完成: '#059669',
-    失败: '#dc2626',
-}
+const expandedId = ref<string | null>(null)
 
 function formatSize(bytes: number): string {
     return bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+function toggleLog(docId: string) {
+    expandedId.value = expandedId.value == docId ? null : docId
 }
 
 onMounted(() => {

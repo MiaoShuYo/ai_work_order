@@ -1,11 +1,7 @@
 import csv
-import io
 import openpyxl
 from docx import Document as DocxDocument
 from pypdf import PdfReader
-
-# 摘要只截取前面这么多字符，今天的目标是让管理员一眼看出文档大致内容和解析是否正常，真正供检索使用的完整切片留给 Day 7 处理。
-_SUMMARY_MAX_LENGTH = 500
 
 
 def _parse_pdf(file_path: str) -> str:
@@ -53,10 +49,9 @@ _PARSERS = {
 
 def parse_document(file_path: str, file_type: str) -> str:
     """
-    解析文档并返回一段文本摘要，不支持的格式或者解析过程中出现异常都会抛出异常，由调用方决定如何把这个异常转换成文档的失败状态。
+    解析文档并返回完整文本，不支持的格式或者解析过程中出现异常都会抛出异常，由调用方决定如何处理。
     """
     parser = _PARSERS.get(file_type.lower())
     if parser is None:
         raise ValueError(f"不支持的文档格式：{file_type}")
-    full_text = parser(file_path)
-    return full_text[:_SUMMARY_MAX_LENGTH]
+    return parser(file_path)

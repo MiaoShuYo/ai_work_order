@@ -18,5 +18,6 @@ class DocumentModel(Base):
     size = Column(Integer, nullable=False)
     status = Column(String, nullable=False, default="处理中")
     summary = Column(Text, nullable=True)
-    error=Column(Text, nullable=True)
+    error = Column(Text, nullable=True)
+    chunk_count = Column(Integer, nullable=False, default=0)
     uploaded_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))

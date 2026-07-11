@@ -6,8 +6,7 @@ from sqlalchemy import pool
 from alembic import context
 from app.db.base import Base
 from app.db.session import DATABASE_URL
-from app.models import document, user, ticket, order
-# noqa: F401  确保模型被注册到 Base.metadata
+from app.models import document, user, ticket, order, document_log  # noqa: F401  确保模型被注册到 Base.metadata
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
