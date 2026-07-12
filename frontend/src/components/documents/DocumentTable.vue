@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue';
+import { ref, onMounted, onUnmounted } from 'vue';
 import { useDocumentsStore } from '../../stores/documents';
 import IndexStatusTag from './IndexStatusTag.vue';
 import DocumentProcessLog from './DocumentProcessLog.vue';

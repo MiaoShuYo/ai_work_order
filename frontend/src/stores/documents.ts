@@ -5,7 +5,7 @@ export interface DocumentInfo {
     id: string
     filename: string
     file_type: string
-    status: '解析中' | '切片完成' | '向量化中' | '可检索' | '失败'
+    status: '解析中' | '切片完成' | '向量化中' | '可检索' | '失败' | '已完成'
     size: number
     chunk_count: number
     uploaded_at: string

@@ -30,7 +30,7 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['document_id'], ['documents.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
-    op.add_column('documents', sa.Column('chunk_count', sa.Integer(), nullable=False))
+    op.add_column('documents', sa.Column('chunk_count', sa.Integer(), nullable=False, server_default='0'))
     # ### end Alembic commands ###
 
 

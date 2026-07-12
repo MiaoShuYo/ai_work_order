@@ -14,7 +14,7 @@ os.makedirs(_VECTOR_STORE_DIR, exist_ok=True)
 _embeddings = OpenAIEmbeddings(
     model=os.getenv("EMBEDDING_MODEL_NAME", "BAAI/bge-m3"),
     api_key=os.getenv("OPENAI_API_KEY"),
-    base_url=os.getenv("OPENAI_API_BASE_URL") or None
+    base_url=os.getenv("OPENAI_BASE_URL") or None
 )
 
 # 所有文档共用一个 collection，检索时靠 metadata 里的 document_id 区分来源，persist_directory 指定之后 Chroma 会在写入时自动落盘，不需要再手动调用 persist。

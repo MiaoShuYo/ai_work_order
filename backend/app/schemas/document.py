@@ -11,7 +11,7 @@ class DocumentInfo(BaseModel):
     filename: str = Field(description="原始文件名")
     file_type: str = Field(description="文件扩展名，如 pdf、docx、xlsx、csv、md")
     status: Literal["解析中", "切片完成", "向量化中", "可检索",
-                    "失败"] = Field(description="文档处理状态")
+                    "失败", "已完成"] = Field(description="文档处理状态")
     size: int = Field(description="文件大小，单位字节")
     chunk_count: int = Field(default=0, description="切片数量，切片完成之前恒为 0")
     uploaded_at: datetime = Field(description="上传时间")
