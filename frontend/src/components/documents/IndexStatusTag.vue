@@ -17,7 +17,9 @@ const STATUS_COLOR: Record<string, string> = {
 
 <template>
     <div class="status-cell">
-        <span class="status-tag" :style="{ color: STATUS_COLOR[status] }">{{ chunkCount }} 个片段</span>
+        <span class="status-tag" :style="{ color: STATUS_COLOR[status] }">{{ status }}</span>
+        <span v-if="chunkCount > 0" class="chunk-count">{{ chunkCount }} 个片段</span>
+        <span v-if="error" class="error-tip">{{ error }}</span>
     </div>
 </template>
 
