@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { sendChatMessage, type ChatMessage } from '../api/chat.ts'
+import { sendChatMessage, type ChatMessage } from '../api/chat'
 import MessageList from '../components/chat/MessageList.vue'
 import ChatInput from '../components/chat/ChatInput.vue'
 

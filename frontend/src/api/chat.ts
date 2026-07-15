@@ -5,11 +5,11 @@ export interface ChatMessage {
     content: string
 }
 
-export interface ChatRequest {
+export interface ChatResponse {
     reply: string
 }
 
 export async function sendChatMessage(messages: ChatMessage[]): Promise<string> {
-    const { data } = await http.post<ChatRequest>('/chat', { messages })
+    const { data } = await http.post<ChatResponse>('/chat', { messages })
     return data.reply
 }
