@@ -14,5 +14,5 @@ class DocumentLogModel(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     document_id = Column(String, ForeignKey("documents.id"), nullable=False)
     step = Column(String, nullable=False)
-    message = Column(Text, nullable=True)
+    message = Column(Text, nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))

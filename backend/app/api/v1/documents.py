@@ -12,7 +12,7 @@ from app.services.document_pipeline import process_document
 
 router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
 
-_STORAGE_DIR = "/backend/storage/documents"
+_STORAGE_DIR = "backend/storage/documents"
 os.makedirs(_STORAGE_DIR, exist_ok=True)
 
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue';
+import { onMounted, onUnmounted, ref } from 'vue';
 import { useDocumentsStore } from '../../stores/documents';
 import IndexStatusTag from './IndexStatusTag.vue';
 import DocumentProcessLog from './DocumentProcessLog.vue';
@@ -32,6 +32,7 @@ onUnmounted(() => {
                 <th>类型</th>
                 <th>大小</th>
                 <th>状态</th>
+                <th>上传时间</th>
                 <th></th>
             </tr>
         </thead>
@@ -44,7 +45,7 @@ onUnmounted(() => {
                     <td>
                         <IndexStatusTag :status="doc.status" :chunk-count="doc.chunk_count" :error="doc.error" />
                     </td>
-                    <td>{{ new Date(doc.uploaded_at).toLocaleDateString() }}</td>
+                    <td>{{ new Date(doc.uploaded_at).toLocaleString() }}</td>
                     <td>
                         <button type="button" @click="toggleLog(doc.id)">查看日志</button>
                     </td>

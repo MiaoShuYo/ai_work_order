@@ -25,12 +25,12 @@ def upgrade() -> None:
     sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
     sa.Column('document_id', sa.String(), nullable=False),
     sa.Column('step', sa.String(), nullable=False),
-    sa.Column('message', sa.Text(), nullable=True),
+    sa.Column('message', sa.Text(), nullable=False),
     sa.Column('created_at', sa.DateTime(), nullable=True),
     sa.ForeignKeyConstraint(['document_id'], ['documents.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
-    op.add_column('documents', sa.Column('chunk_count', sa.Integer(), nullable=False))
+    op.add_column('documents', sa.Column('chunk_count', sa.Integer(), nullable=False, server_default='0'))
     # ### end Alembic commands ###
 
 
