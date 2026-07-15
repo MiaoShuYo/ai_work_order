@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { DocumentLogEntry, useDocumentsStore } from '../../stores/documents'
-import { create } from 'axios';
 
 const props = defineProps<{ documentId: string }>()
 const store = useDocumentsStore()

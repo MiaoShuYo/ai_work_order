@@ -26,7 +26,7 @@ def process_document(doc_id: str, file_path: str, file_type: str, filename: str)
             chunks = split_text(full_text)
         except Exception as e:
             update_status(db, doc_id, status="失败",
-                          erro=str(e), summary=summary)
+                          error=str(e), summary=summary)
             add_log(db, doc_id, step="切片", message=f"切片失败：{str(e)}")
             return
 
@@ -41,10 +41,10 @@ def process_document(doc_id: str, file_path: str, file_type: str, filename: str)
             index_chunks(doc_id, filename, chunks)
         except Exception as exc:
             update_status(db, doc_id, status="失败", error=str(exc))
-            add_log(db, doc_id, Step="向量化", message=f"向量化失败：{exc}")
+            add_log(db, doc_id, step="向量化", message=f"向量化失败：{exc}")
             return
         
-        update_status(db,doc_id,status="可检索")
-        add_log(db,doc_id,step="向量化",message="向量化完成，已写入索引，可以被检索")
+        update_status(db, doc_id, status="可检索")
+        add_log(db, doc_id, step="向量化", message="向量化完成，已写入索引，可以被检索")
     finally:
         db.close()

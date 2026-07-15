@@ -24,7 +24,7 @@ const preview = props.content.length > 200 ? props.content.slice(0, 200) + '...'
 <template>
     <div class="snippet" :class="{ expanded }">
         <div class="snippet-header" @click="expanded = !expanded">
-            <span class="snippet-source">{{ filename }}（片段）#{{ chunkIndex + 1 }}</span>
+            <span class="snippet-source">{{ filename }}（片段 #{{ chunkIndex + 1 }}）</span>
             <span class="snippet-score" :style="{ color: scoreColor(score) }">{{ (score * 100).toFixed(0) }}%</span>
         </div>
         <p class="snippet-text">{{ expanded ? content : preview }}</p>

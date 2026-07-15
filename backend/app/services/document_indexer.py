@@ -5,7 +5,7 @@ from langchain_openai import OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 _CHUNK_SIZE = 500
-_CHUNK_VOERLAP = 50
+_CHUNK_OVERLAP = 50
 
 _VECTOR_STORE_DIR = "backend/storage/vector_store"
 os.makedirs(_VECTOR_STORE_DIR, exist_ok=True)
@@ -26,7 +26,7 @@ _vector_store = Chroma(
 
 _splitter = RecursiveCharacterTextSplitter(
     chunk_size=_CHUNK_SIZE,
-    chunk_overlap=_CHUNK_VOERLAP)
+    chunk_overlap=_CHUNK_OVERLAP)
 
 
 def split_text(text: str) -> list[str]:
