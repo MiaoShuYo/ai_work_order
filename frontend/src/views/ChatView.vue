@@ -12,15 +12,15 @@ const messages = ref<ChatMessage[]>([])
 const loading = ref(false)
 const errorMessage = ref('')
 
-function onToolCallStart(event: { name: string, args: Record<string, any> }) {
+function onToolCallStart(name: string, args: Record<string, any>) {
   // 对知识库检索使用更具体的提示文案，让客服明确知道系统正在翻公司资料而不是做别的操作 
-  const label = event.name === 'search_knowledge_base' ? '正在检索知识库...' : `正在调用 ${event.name}...`
+  const label = name === 'search_knowledge_base' ? '正在检索知识库…' : `正在调用 ${name}…`
 
   messages.value.push({
     id: crypto.randomUUID(),
     role: 'assistant',
     content: '',
-    toolCalls: [{ name: event.name, args: event.args, result: null, label }],
+    toolCalls: [{ name, args, result: null, label }],
     timestamp: Date.now(),
   } as any)
 }
