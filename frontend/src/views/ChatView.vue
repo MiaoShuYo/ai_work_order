@@ -5,6 +5,17 @@ import { useTaskContext } from '../composables/useTaskContext'
 import MessageList from '../components/chat/MessageList.vue'
 import ChatInput from '../components/chat/ChatInput.vue'
 import ContextPanel from '../components/context/ContextPanel.vue'
+import SourceList from '../components/rag/SourceList.vue'
+import SourceDrawer from '../components/rag/SourceDrawer.vue'
+
+interface SourceInfo {
+  index: number
+  filename: string
+  chunk_index: number
+  content: string
+  score: number
+  page?: number | null
+}
 
 const { recordToolCall } = useTaskContext()
 
@@ -12,17 +23,18 @@ const messages = ref<ChatMessage[]>([])
 const loading = ref(false)
 const errorMessage = ref('')
 
-function onToolCallStart(event: { name: string, args: Record<string, any> }) {
-  // 对知识库检索使用更具体的提示文案，让客服明确知道系统正在翻公司资料而不是做别的操作 
-  const label = event.name === 'search_knowledge_base' ? '正在检索知识库...' : `正在调用 ${event.name}...`
+// 引用来源抽屉的状态
+const drawerVisible = ref(false)
+const selectedSource = ref<SourceInfo | null>(null)
 
-  messages.value.push({
-    id: crypto.randomUUID(),
-    role: 'assistant',
-    content: '',
-    toolCalls: [{ name: event.name, args: event.args, result: null, label }],
-    timestamp: Date.now(),
-  } as any)
+function onSelectSource(source: SourceInfo) {
+  selectedSource.value = source
+  drawerVisible.value = true
+}
+
+function onCloseDrawer() {
+  drawerVisible.value = false
+  selectedSource.value = null
 }
 
 function createPendingMessage(): AssistantMessage {
@@ -47,13 +59,15 @@ async function handleSend(text: string) {
   loading.value = true
 
   try {
-    // 发给后端的历史消息要去掉刚推入的占位消息本身，它的 answer 还是空字符串，带上去只会在对话历史里插入一条没有意义的空白 AI 回复。
     await streamChatMessage(messages.value.slice(0, -1), {
       onToolCallStart(name, args) {
-        onToolCallStart(name,args)
+        const label =
+          name === 'search_knowledge_base'
+            ? '正在检索知识库…'
+            : `正在调用 ${name}…`
+        pendingMessage.toolCalls.push({ name, args, status: 'calling', label } as any)
       },
       onToolCallEnd(name, args, result) {
-        // 按工具名加状态反查刚才 push 进去的那条记录并原地更新，而不是重新 push 一条，避免同一次调用在卡片上重复出现两行。
         const target = pendingMessage.toolCalls.find(
           (call) => call.name === name && call.status === 'calling',
         )
@@ -61,14 +75,22 @@ async function handleSend(text: string) {
           target.status = 'done'
           target.result = result
         }
-        // 上下文面板要跨越整个会话持续展示最新的用户、订单、工单信息，这份记录独立于当前这条消息的 toolCalls，写进 useTaskContext 维护的全局状态里。
+        // 上下文面板要跨越整个会话持续展示最新的用户、订单、工单信息
         recordToolCall(name, args, result)
       },
       onFinal(finalMessage) {
-        // 找到占位消息在数组中的索引，用新消息替换它以触发 Vue 响应式更新
         const index = messages.value.indexOf(pendingMessage)
         if (index !== -1) {
           messages.value[index] = { ...finalMessage, pending: false }
+        }
+      },
+      onSources(sourcesData) {
+        // sources 事件在 final 之后到达，挂到对应的 assistant 消息上
+        const lastAssistantMsg = [...messages.value].reverse().find(
+          (m) => m.role === 'assistant',
+        )
+        if (lastAssistantMsg) {
+          ; (lastAssistantMsg as any).sources = sourcesData.sources
         }
       },
       onError(message) {
@@ -83,7 +105,6 @@ async function handleSend(text: string) {
 }
 
 function handleSelectAction(action: string) {
-  // 真正触发工具调用是第 4 天要接入的能力，今天先用弹窗占位，把交互路径提前搭好，后面只需要替换这个函数的实现。
   window.alert(`已记录建议操作：${action}，工具调用能力将在后续接入`)
 }
 </script>
@@ -94,11 +115,13 @@ function handleSelectAction(action: string) {
       <div class="session-item active">默认会话</div>
     </aside>
     <section class="chat-main">
-      <MessageList :messages="messages" @select-action="handleSelectAction" />
+      <MessageList :messages="messages" @select-action="handleSelectAction" @select-source="onSelectSource" />
       <p v-if="errorMessage" class="error-tip">{{ errorMessage }}</p>
       <ChatInput :loading="loading" @send="handleSend" />
     </section>
     <ContextPanel />
+    <!-- 引用来源详情抽屉 -->
+    <SourceDrawer :source="selectedSource" :visible="drawerVisible" @close="onCloseDrawer" />
   </div>
 </template>
 

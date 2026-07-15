@@ -6,6 +6,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from langchain_openai import ChatOpenAI
 
 from app.schemas.chat import ChatResponse, ToolCallResult
+from app.schemas.knowledge import SourceInfo
 from app.tools.knowledge_tool import search_knowledge_base
 from app.tools.order_tool import query_order
 from app.tools.ticket_tool import query_ticket
@@ -34,20 +35,22 @@ _TOOLS_BY_NAME = {t.name: t for t in _TOOLS}
 # 今天的场景可能需要先查用户、再查订单、再查关联工单，三轮工具调用已经把余量用的比较紧，调到 4 给正常的多工具协同流程留一点安全边际，真触发上限说明模型没有在合理的步数内收敛。
 _MAX_TOOL_ITERATIONS = 4
 
-_SYSTEM_PROMPT = (
-    "你是一个电商平台的智能客服助手，需要基于用户的问题给出结构化判断。"
-    "intent 只能从 order_issue、account_issue、refund_request、general_inquiry、other 中选择一个，"
-    "分别对应订单问题、账号问题、退款请求、一般咨询和其他情况。"
-    "如果用户的问题涉及具体订单号的发货、支付或物流状态，调用 query_order 查询真实数据。"
-    "如果用户提到了工单号或者想知道之前提交的工单处理进度，调用 query_ticket 查询。"
-    "如果需要确认用户的身份、等级或者联系方式，调用 query_user 查询，用户 ID 通常需要先从对话里确认，不要凭空编造。"
-    "如果用户的问题属于退款政策、发货时效、账号安全这类通用规则性问题，调用 search_knowledge_base 检索相关说明，"
-    "不要凭记忆直接回答政策类问题。"
-    "以上工具可以在同一轮对话里按需要多次调用，不要凭空编造任何工具没有返回过的数据。"
-    "confidence 反映你对这次判断和回答的把握程度，如果问题描述模糊或者超出你的知识范围，"
-    "应该给出较低的置信度并将 need_human 设为 true，提醒客服人员介入。"
-    "suggested_actions 给出客服人员可以立刻执行的具体动作，不要给空泛的建议。"
-)
+_SYSTEM_PROMPT = """你是一个企业客服 AI 助手，可以帮助客服查询订单、工单、用户信息，以及从公司知识库中检索政策、产品说明等资料。
+
+## 工具使用规范
+如果用户的问题涉及具体订单号的发货、支付或物流状态，调用 query_order 查询真实数据。
+如果用户提到了工单号或者想知道之前提交的工单处理进度，调用 query_ticket 查询。
+如果需要确认用户的身份、等级或者联系方式，调用 query_user 查询，用户 ID 通常需要先从对话里确认，不要凭空编造。
+如果用户的问题属于退款政策、发货时效、账号安全这类通用规则性问题，调用 search_knowledge_base 检索相关说明，不要凭记忆直接回答政策类问题。
+以上工具可以在同一轮对话里按需要多次调用，不要凭空编造任何工具没有返回过的数据。
+
+## 引用规范（重要）
+当你使用知识库检索（search_knowledge_base）返回的片段来组织回答时，必须在回答中用 [数字] 标注每条关键信息的来源，数字对应片段列表中的序号。
+例如，如果片段 1 来自售后政策文档、片段 2 来自退款规则文档，你的回答应该类似：
+
+"根据售后政策，用户签收后 7 天内可申请无理由退款[1]，退款将在 3 个工作日内原路退回[2]。"
+
+引用标注要紧跟被引用的那句话，不要把所有标注堆在段落末尾，也不要漏掉任何一条来自知识库的信息。如果某条信息是你自己的通用知识而非来自检索结果，不要给它加引用标注。"""
 
 _ROLE_TO_MESSAGE = {
     "user": HumanMessage,
@@ -63,49 +66,91 @@ def _to_langchain_messages(messages: list[dict[str, str]]) -> list[BaseMessage]:
             ]
 
 
-async def stream_chat(messages: list[dict[str, str]]) -> AsyncGenerator[dict, None]:
+async def stream_chat(messages: list[dict[str, str]], conversation_id: str = "") -> AsyncGenerator[dict, None]:
     """
-    驱动一次可能包含多轮、多种工具调用的对话，以事件流的形式产出中间过程和最终结果。
+    流式处理一轮对话，在最终回答之后会额外发送 sources 事件携带引用来源。
     """
-    history: list[BaseMessage] = [SystemMessage(
-        content=_SYSTEM_PROMPT), *_to_langchain_messages(messages)]
+    full_messages = [SystemMessage(content=_SYSTEM_PROMPT)]+list(messages)
+
+    # 收集本轮对话中知识库检索返回的所有片段，用于最终生成 sources事件
+    collected_sources: list[SourceInfo] = []
+    # 收集本轮对话中所有工具调用的记录，最终挂到 ChatResponse.tool_calls 上让前端展示
     collected_tool_calls: list[ToolCallResult] = []
 
-    try:
-        for _ in range(_MAX_TOOL_ITERATIONS):
-            ai_message = await _llm_with_tools.ainvoke(history)
+    iteration = 0
+    while iteration < _MAX_TOOL_ITERATIONS:
+        iteration += 1
+        response: AIMessage = await _llm_with_tools.ainvoke(full_messages)
 
-            if not ai_message.tool_calls:
-                # 模型这一轮没有请求任何工具，说明它任务已经掌握了足够信息，直接跳出循环进入最终的结构化输出
-                break
-            history.append(ai_message)
+        if not response.tool_calls:
+            # 没有工具调用，生成最终回答
+            final_response: ChatResponse = await _structured_llm.ainvoke(full_messages)
+            final_response.tool_calls = collected_tool_calls
 
-            for tool_call in ai_message.tool_calls:
-                tool_name = tool_call["name"]
-                tool_args = tool_call["args"]
-                yield {"type": "tool_call_start", "name": tool_name, "args": tool_args}
+            yield {"type": "final", "data": final_response.model_dump()}
 
-                tool = _TOOLS_BY_NAME.get(tool_name)
-                tool_result = await tool.ainvoke(tool_args)
-                
-                yield {"type": "tool_call_end", "name": tool_name, "result": tool_result}
-                collected_tool_calls.append(
-                    ToolCallResult(
-                        name=tool_name, args=tool_args, result=tool_result)
+            # 如果有收集到知识库来源，在 final 之后紧跟着发送 sources 事件
+            if collected_sources:
+                yield {
+                    "type": "sources",
+                    "data": {
+                        "conversation_id": conversation_id,
+                        "sources": [s.model_dump() for s in collected_sources]
+                    },
+                }
+            return
+        # 处理工具调用
+        full_messages.append(response)
+        for tool_call in response.tool_calls:
+            name = tool_call["name"]
+            args = tool_call["args"]
+            tool_func = _TOOLS_BY_NAME.get(name)
+            if tool_func is None:
+                continue
+
+            yield {"type": "tool_call_start", "name": name, "args": args}
+
+            result = tool_func.invoke(args)
+            yield {"type": "tool_call_end", "name": name, "result": result}
+
+            full_messages.append(
+                ToolMessage(
+                    content=json.dumps(result, ensure_ascii=False),
+                    tool_call_id=tool_call["id"]
                 )
-                # ToolMessage 必须带上对应的 tool_call_id，模型才能把这条结果和他发起的那次调用对上号，尤其在一轮里并行调用多个工具时这一点不能省。
-                history.append(
-                    ToolMessage(
-                        content=json.dumps(tool_result, ensure_ascii=False), tool_call_id=tool_call["id"])
-                )
-        else:
-            # 在循环耗尽 _MAX_TOOL_ITERATIONS 次数，始终没有触发 break 时执行，说明模型一直在反复调用工具没有收敛，这里追加一条系统提示，逼着接下来的结构化输出必须直接给出结论
-            history.append(SystemMessage(
-                content="已达到最大工具调用次数，请基于目前已有的信息直接给出结论。"))
+            )
+            collected_tool_calls.append(
+                ToolCallResult(name=name, args=args, result=result)
+            )
 
-        final_response: ChatResponse = await _structured_llm.ainvoke(history)
-        final_response.tool_calls = collected_tool_calls
-        yield {"type": "final", "data": final_response.model_dump()}
-    except Exception as exc:
-        # 流已经开始推送之后不能再抛出 HTTPException 让FastAPI 转换成标准错误响应，响应头和部分事件很可能已经发给前端了，只能通过一个 error 事件通知调用方，由前端决定怎么在界面上呈现这次失败。
-        yield {"type": "error", "message": str(exc)}
+            # 如果是知识库检索，把返回的片段收集起来
+            if name == "search_knowledge_base" and isinstance(result, dict):
+                for snippet in result.get("snippets", []):
+                    collected_sources.append(
+                        SourceInfo(
+                            index=snippet["index"],
+                            filename=snippet["filename"],
+                            chunk_index=snippet["chunk_index"],
+                            content=snippet["content"],
+                            score=snippet["score"],
+                            page=snippet.get("page")
+                        )
+                    )
+    # 超出最大迭代次数，强制生成回答
+    full_messages.append(
+        SystemMessage(content="已达到最大工具调用次数，请基于目前已有的信息直接给出结论。")
+    )
+
+    final_response: ChatResponse = await _structured_llm.ainvoke(full_messages)
+    final_response.tool_calls = collected_tool_calls
+
+    yield {"type": "final", "data": final_response.model_dump()}
+
+    if collected_sources:
+        yield {
+            "type": "sources",
+            "data": {
+                "conversation_id": conversation_id,
+                "sources": [s.model_dump() for s in collected_sources],
+            },
+        }
