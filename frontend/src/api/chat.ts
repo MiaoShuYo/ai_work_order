@@ -39,10 +39,10 @@ function toApiMessage(message: ChatMessage): {
 
 
 export async function sendChatMessage(history: ChatMessage[]): Promise<AssistantMessage> {
-    const paylaod ={
+    const payload = {
         messages: history.map(toApiMessage)
     }
-    const {data} = await http.post<ChatResponseDto>('/chat', paylaod)
+    const { data } = await http.post<ChatResponseDto>('/chat', payload)
     return {
         role: 'assistant',
         intent: data.intent,
