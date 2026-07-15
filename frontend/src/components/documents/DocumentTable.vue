@@ -39,7 +39,7 @@ onMounted(() => {
                     <span class="status-tag" :style="{ color: STATUS_COLOR[doc.status] }">{{ doc.status }}</span>
                     <span v-if="doc.error" class="error-tip">{{ doc.error }}</span>
                 </td>
-                <td>{{ new Date(doc.uploaded_at).toLocaleDateString() }}</td>
+                <td>{{ new Date(doc.uploaded_at).toLocaleString() }}</td>
             </tr>
         </tbody>
     </table>

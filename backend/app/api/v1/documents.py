@@ -10,7 +10,7 @@ from app.services.document_parser import parse_document
 
 router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
 
-_STORAGE_DIR = "/backend/storage/documents"
+_STORAGE_DIR = "storage/documents"
 os.makedirs(_STORAGE_DIR, exist_ok=True)
 
 

@@ -1,5 +1,5 @@
 import csv
-import io
+
 import openpyxl
 from docx import Document as DocxDocument
 from pypdf import PdfReader
