@@ -12,6 +12,7 @@ from app.db.seed import seed_initial_data
 from app.db.session import SessionLocal
 from app.api.v1.chat import router as chat_router
 from app.api.v1.documents import router as documents_router
+from app.api.v1.debug import router as debug_router
 
 
 @asynccontextmanager
@@ -36,6 +37,7 @@ app.add_middleware(
 
 app.include_router(chat_router, prefix="/api/v1")
 app.include_router(documents_router)
+app.include_router(debug_router)
 
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@
     <nav class="nav-bar">
         <RouterLink to="/chat" class="nav-link">对话</RouterLink>
         <RouterLink to="/documents" class="nav-link">知识库文档</RouterLink>
+        <RouterLink to="/rag-debug" class="nav-link">检索调试</RouterLink>
     </nav>
 </template>
 
