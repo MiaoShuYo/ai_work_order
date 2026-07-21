@@ -2,6 +2,16 @@
 import { nextTick, ref, watch } from 'vue'
 import type { ChatMessage } from '../../api/chat'
 import AnswerCard from './AnswerCard.vue'
+import SourceList from '../rag/SourceList.vue'
+
+interface SourceInfo {
+    index: number
+    filename: string
+    chunk_index: number
+    content: string
+    score: number
+    page?: number | null
+}
 
 const props = defineProps<{
     messages: ChatMessage[]
@@ -9,6 +19,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
     selectAction: [action: string]
+    selectSource: [source: SourceInfo]
 }>()
 
 const listRef = ref<HTMLDivElement | null>(null)
@@ -29,7 +40,14 @@ watch(
     <div ref="listRef" class="message-list">
         <div v-for="(message, index) in props.messages" :key="index" class="message-item" :class="message.role">
             <div v-if="message.role === 'user'" class="message-bubble">{{ message.content }}</div>
-            <AnswerCard v-else :message="message" @selectAction="emit('selectAction', $event)" />
+            <div v-else class="assistant-block">
+                <AnswerCard :message="message" @selectAction="emit('selectAction', $event)" />
+                <SourceList
+                    v-if="(message as any).sources"
+                    :sources="(message as any).sources"
+                    @select="emit('selectSource', $event)"
+                />
+            </div>
         </div>
     </div>
 </template>
@@ -56,10 +74,13 @@ watch(
 
 .message-bubble {
   max-width: 70%;
+  min-width: 0;
+  overflow: hidden;
   padding: 10px 14px;
   border-radius: 8px;
   white-space: pre-wrap;
   word-break: break-word;
+  overflow-wrap: anywhere;
   background-color: #2563eb;
   color: #fff;
 }

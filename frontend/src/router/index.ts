@@ -5,7 +5,8 @@ const router = createRouter({
     routes: [
         { path: '/', redirect: '/chat' },
         { path: '/chat', component: () => import('../views/ChatView.vue') },
-        { path: '/documents', component: () => import('../views/DocumentsView.vue') }
+        { path: '/documents', component: () => import('../views/DocumentsView.vue') },
+        {path:'/rag-debug',component:()=> import ('../views/RagDebugView.vue')}
     ],
 })
 

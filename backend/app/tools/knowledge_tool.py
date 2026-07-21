@@ -1,30 +1,21 @@
 from langchain_core.tools import tool
 from app.schemas.knowledge import KnowledgeSnippet
-
-# 今天先用几条写死的文档模拟知识库，验证“判断需要查资料、调用检索、组织回答”这条链路，第 2 周接入向量库之后，只需要替换这个列表和下面的匹配逻辑，search_knowledge_base 对外的签名不变。
-_MOCK_DOCS: list[KnowledgeSnippet] = [
-    KnowledgeSnippet(
-        title="退款政策说明",
-        content="订单支付成功后 7 天内且尚未发货的，可以申请无理由退款，退款会在 3 个工作日内原路退回。",
-        source="knowledge_base/refund_policy.md",
-    ),
-    KnowledgeSnippet(
-        title="发货时效说明",
-        content="普通商品在支付成功后 48 小时内安排发货，偏远地区可能延长至 72 小时。",
-        source="knowledge_base/shipping_sla.md",
-    ),
-    KnowledgeSnippet(
-        title="账号安全说明",
-        content="连续输错密码 5 次会临时锁定账号 30 分钟，可以通过绑定手机号验证码解锁。",
-        source="knowledge_base/account_security.md",
-    ),
-]
+from app.services.retriever import retrieve
 
 
 @tool
 def search_knowledge_base(query: str) -> dict:
     """
-    按关键词再知识库里检索相关说明，query 是从用户问题里提炼出来的关键词，比如退款、发货时效、账号锁定，今天的实现只是简单的关键此包含匹配，不支持语义相似的问法。
+    在知识库里检索与 query 语义相关的文档片段，返回的每条片段都带有 index 序号，模型在回答中引用具体片段时，必须使用 [index] 格式标注来源，例如 [1]、[2]。query 是从用户问题里提炼出的自然语言查询，不需要手动拆成关键词。
     """
-    hits = [doc for doc in _MOCK_DOCS if query in doc.content or query in doc.title]
-    return {"snippets": [hit.model_dump() for hit in hits]}
+    results = retrieve(query)
+    if not results:
+        return {
+            "snippets": [],
+            "message": "未在知识库中找到相关内容，建议尝试换一种问法或者联系人工客服。"
+        }
+    snippets = []
+    for i, item in enumerate(results):
+        item["index"] = i+1
+        snippets.append(KnowledgeSnippet(**item).model_dump())
+    return {"snippets": snippets}

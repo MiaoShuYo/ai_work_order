@@ -39,6 +39,8 @@ const emit = defineEmits<{
 <style scoped>
 .answer-card {
   max-width: 70%;
+  min-width: 0;
+  overflow: hidden;
   padding: 12px 14px;
   border-radius: 8px;
   background-color: #f1f5f9;
@@ -67,6 +69,7 @@ const emit = defineEmits<{
   margin: 0 0 8px;
   white-space: pre-wrap;
   word-break: break-word;
+  overflow-wrap: anywhere;
   color: #1f2937;
 }
 

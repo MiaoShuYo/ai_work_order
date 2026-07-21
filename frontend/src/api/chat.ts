@@ -64,6 +64,17 @@ interface StreamHandlers {
     onFinal: (
         message: AssistantMessage
     ) => void
+    onSources?: (data: {
+        conversation_id: string
+        sources: Array<{
+            index: number
+            filename: string
+            chunk_index: number
+            content: string
+            score: number
+            page?: number | null
+        }>
+    }) => void
     onError: (
         message: string
     ) => void
@@ -126,6 +137,9 @@ export async function streamChatMessage(history: ChatMessage[], handlers: Stream
                     })
                     break
                 }
+                case 'sources':
+                    handlers.onSources?.(event.data)
+                    break
                 case 'error':
                     handlers.onError(event.message)
                     break
