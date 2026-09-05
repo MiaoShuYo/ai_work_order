@@ -7,6 +7,8 @@ from langchain_openai import ChatOpenAI
 
 from app.schemas.chat import ChatResponse, ToolCallResult
 from app.schemas.knowledge import SourceInfo
+from app.schemas.intent import IntentResult, INTENT_LABELS, IntentType
+from app.agents.intent_agent import classify_intent
 from app.tools.knowledge_tool import search_knowledge_base
 from app.tools.order_tool import query_order
 from app.tools.ticket_tool import query_ticket
@@ -35,7 +37,10 @@ _TOOLS_BY_NAME = {t.name: t for t in _TOOLS}
 # 今天的场景可能需要先查用户、再查订单、再查关联工单，三轮工具调用已经把余量用的比较紧，调到 4 给正常的多工具协同流程留一点安全边际，真触发上限说明模型没有在合理的步数内收敛。
 _MAX_TOOL_ITERATIONS = 4
 
-_SYSTEM_PROMPT = """你是一个企业客服 AI 助手，可以帮助客服查询订单、工单、用户信息，以及从公司知识库中检索政策、产品说明等资料。
+# 置信度阈值，低于此值时系统建议转人工，数值来自业务方的要求，他们希望 AI 在拿不准时宁可不说也不要乱说。
+_CONFIDENCE_THRESHOLD = float(os.getenv("INTENT_CONFIDENCE_THRESHOLD", "0.6"))
+
+_AGENT_SYSTEM_PROMPT = """你是一个企业客服 AI 助手，可以帮助客服查询订单、工单、用户信息，以及从公司知识库中检索政策、产品说明等资料。
 
 ## 工具使用规范
 如果用户的问题涉及具体订单号的发货、支付或物流状态，调用 query_order 查询真实数据。
@@ -50,7 +55,16 @@ _SYSTEM_PROMPT = """你是一个企业客服 AI 助手，可以帮助客服查�
 
 "根据售后政策，用户签收后 7 天内可申请无理由退款[1]，退款将在 3 个工作日内原路退回[2]。"
 
-引用标注要紧跟被引用的那句话，不要把所有标注堆在段落末尾，也不要漏掉任何一条来自知识库的信息。如果某条信息是你自己的通用知识而非来自检索结果，不要给它加引用标注。"""
+引用标注要紧跟被引用的那句话，不要把所有标注堆在段落末尾，也不要漏掉任何一条来自知识库的信息。如果某条信息是你自己的通用知识而非来自检索结果，不要给它加引用标注。
+
+## 回答策略（根据用户意图调整）
+系统会在每条用户消息之前注入意图识别结果，你需要根据意图类型调整回答策略：
+- knowledge_qa：优先调用 search_knowledge_base 检索相关资料再回答，确保回答有依据。
+- order_query：优先调用 query_order 获取订单数据，如果用户追问细节但没有提供订单号，先引导用户提供订单号。
+- complaint_handle：先表达理解用户情绪，再调用相关工具核实情况，最后给出明确的处理方案和时间预期，不要只给一句"我们会尽快处理"。
+- ticket_create：引导用户确认工单内容和期望的处理方式，确认后再调用 query_ticket 检查是否有重复工单。
+- refund_advice：先调用 search_knowledge_base 查退款政策，如果用户提到了具体订单则同步调用 query_order 核实订单状态，结合政策和订单状态给出具体的退款建议。
+- transfer_human：不要尝试挽留用户或继续追问，直接告知用户即将转接人工客服并说明后续流程。"""
 
 _ROLE_TO_MESSAGE = {
     "user": HumanMessage,
@@ -68,15 +82,69 @@ def _to_langchain_messages(messages: list[dict[str, str]]) -> list[BaseMessage]:
 
 async def stream_chat(messages: list[dict[str, str]], conversation_id: str = "") -> AsyncGenerator[dict, None]:
     """
-    流式处理一轮对话，在最终回答之后会额外发送 sources 事件携带引用来源。
+    流式处理一轮对话。每次调用首先对用户最新消息做意图识别，通过 intent 事件发送给前端，再将意图信息注入系统消息供 Agent 调整策略。
     """
-    full_messages = [SystemMessage(content=_SYSTEM_PROMPT)]+list(messages)
+    # 提取用户最新一条消息用于意图识别
+    last_user_message = ""
+    for msg in reversed(messages):
+        if msg.get("role") == "user":
+            last_user_message = msg.get("content", "")
+            break
+
+    # ① 意图识别：在 Agent 开始处理之前先判断用户想干什么
+    intent_result: IntentResult | None = None
+    if last_user_message.strip():
+        try:
+            intent_result = await classify_intent(last_user_message)
+            # 如果置信度低于阈值，标记需要转人工
+            if intent_result.confidence < _CONFIDENCE_THRESHOLD:
+                intent_result.need_human = True
+        except Exception:
+            # 意图识别失败不影响主流程，降级为未知意图，Agent 按通用规则处理
+            intent_result = IntentResult(
+                intent="knowledge_qa",
+                confidence=0.0,
+                reasoning="意图识别调用失败，降级为通用知识问答模式",
+                need_human=False
+            )
+
+        # 通过 SSE 事件把意图结果发给前端
+        if intent_result:
+            yield {
+                "type": "intent",
+                "data": {
+                    "intent": intent_result.intent,
+                    "confidence": intent_result.confidence,
+                    "reasoning": intent_result.reasoning,
+                    "need_human": intent_result.need_human,
+                    "label": INTENT_LABELS.get(intent_result.intent, {}).get("label", ""),
+                    "color": INTENT_LABELS.get(intent_result.intent, {}).get("color", ""),
+                },
+            }
+
+    # ② 构建消息列表，如果有意图识别结果，作为系统消息注入
+    intent_hint = ""
+    if intent_result:
+        intent_label = INTENT_LABELS.get(intent_result.intent, {}).get(
+            "label", intent_result.intent)
+        intent_hint = (
+            f"[系统提示] 本次对话的意图识别结果：{intent_label}（置信度：{intent_result.confidence:.0%}）。"
+            f"判断依据：{intent_result.reasoning}"
+        )
+        if intent_result.need_human:
+            intent_hint += " 注意：置信度较低，如果无法给出确定的回答，请主动建议用户转接人工客服。"
+
+    full_messages = [SystemMessage(content=_AGENT_SYSTEM_PROMPT)]
+    if intent_hint:
+        full_messages.append(SystemMessage(content=intent_hint))
+    full_messages.extend(list(messages))
 
     # 收集本轮对话中知识库检索返回的所有片段，用于最终生成 sources事件
     collected_sources: list[SourceInfo] = []
     # 收集本轮对话中所有工具调用的记录，最终挂到 ChatResponse.tool_calls 上让前端展示
     collected_tool_calls: list[ToolCallResult] = []
 
+    # ③ 进入工具调用循环
     iteration = 0
     while iteration < _MAX_TOOL_ITERATIONS:
         iteration += 1

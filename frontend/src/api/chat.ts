@@ -40,6 +40,15 @@ export interface ChatResponseDto {
     }[]
 }
 
+export interface IntentData {
+    intent: string
+    confidence: number
+    reasoning: string
+    need_human: boolean
+    label: string
+    color: string
+}
+
 // 发给后端的历史消息里，AI 消息只需要还原成一段文本，后端目前只有 content 字段拼接对话上下文。不关心当时判断出的 intent 和置信度这些衍生字段
 function toApiMessage(message: ChatMessage): {
     role: 'user' | 'assistant'; content: string
@@ -75,6 +84,7 @@ interface StreamHandlers {
             page?: number | null
         }>
     }) => void
+    onIntent?: (data: IntentData) => void
     onError: (
         message: string
     ) => void
@@ -139,6 +149,9 @@ export async function streamChatMessage(history: ChatMessage[], handlers: Stream
                 }
                 case 'sources':
                     handlers.onSources?.(event.data)
+                    break
+                case 'intent':
+                    handlers.onIntent?.(event.data)
                     break
                 case 'error':
                     handlers.onError(event.message)

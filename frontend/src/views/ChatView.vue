@@ -7,6 +7,17 @@ import ChatInput from '../components/chat/ChatInput.vue'
 import ContextPanel from '../components/context/ContextPanel.vue'
 import SourceList from '../components/rag/SourceList.vue'
 import SourceDrawer from '../components/rag/SourceDrawer.vue'
+import IntentResultCard from '../components/intent/IntentResultCard.vue'
+
+// intent 事件的类型定义和 api/chat.ts 里的 IntentData 保持一致
+interface IntentInfo {
+  intent: string
+  confidence: number
+  reasoning: string
+  need_human: boolean
+  label: string
+  color: string
+}
 
 interface SourceInfo {
   index: number
@@ -23,6 +34,10 @@ const messages = ref<ChatMessage[]>([])
 const loading = ref(false)
 const errorMessage = ref('')
 
+// 意图识别相关状态
+const currentIntent = ref<IntentInfo | null>(null)
+const bannerDismissed = ref(false)  // 顶部转人工横幅的关闭状态
+
 // 引用来源抽屉的状态
 const drawerVisible = ref(false)
 const selectedSource = ref<SourceInfo | null>(null)
@@ -35,6 +50,22 @@ function onSelectSource(source: SourceInfo) {
 function onCloseDrawer() {
   drawerVisible.value = false
   selectedSource.value = null
+}
+
+// 关闭意图卡片（不影响顶部横幅）
+function onDismissIntent() {
+  currentIntent.value = null
+}
+
+// 关闭顶部横幅
+function onDismissBanner() {
+  bannerDismissed.value = true
+}
+
+// 转人工操作：目前为占位实现，记录到控制台，Day 15 对接审批流程后替换为正式接口调用
+function onTransferToHuman() {
+  console.log('[Intent] 用户确认转人工，当前意图：', currentIntent.value)
+  // TODO Day 15：调用转人工接口，创建审批记录
 }
 
 function createPendingMessage(): AssistantMessage {
@@ -52,6 +83,8 @@ function createPendingMessage(): AssistantMessage {
 
 async function handleSend(text: string) {
   errorMessage.value = ''
+  currentIntent.value = null  // 新消息发出后重置意图状态
+  bannerDismissed.value = false
   messages.value.push({ role: 'user', content: text })
 
   const pendingMessage = createPendingMessage()
@@ -93,6 +126,14 @@ async function handleSend(text: string) {
           ; (lastAssistantMsg as any).sources = sourcesData.sources
         }
       },
+      onIntent(IntentData) {
+        // 意图识别结果到达，更新响应式状态驱动 UI 渲染
+        currentIntent.value = IntentData
+        // 如果是转人工意图且置信度较高，自动触发转人工流程
+        if (IntentData.intent === 'transfer_human' && IntentData.confidence >= 0.7) {
+          onTransferToHuman()
+        }
+      },
       onError(message) {
         errorMessage.value = message
       },
@@ -115,6 +156,19 @@ function handleSelectAction(action: string) {
       <div class="session-item active">默认会话</div>
     </aside>
     <section class="chat-main">
+      <!-- 低置信度持续提示横幅：need_human 为 true 且未被关闭时显示 -->
+      <div v-if="currentIntent?.need_human && !bannerDismissed" class="intent-banner">
+        <span class="banner-icon">⚠️</span>
+        <span class="banner-text">
+          AI 对本次对话的意图判断把握较低（置信度 {{ (currentIntent.confidence * 100).toFixed(0) }}%），建议转接人工客服以确保处理准确。
+        </span>
+        <button class="banner-btn primary" @click="onTransferToHuman">转人工</button>
+        <button class="banner-close" @click="onDismissBanner">✕</button>
+      </div>
+      <!-- 意图识别结果卡片：每次对话开始时展示，可手动关闭 -->
+      <IntentResultCard v-if="currentIntent" :intent="currentIntent.intent" :confidence="currentIntent.confidence"
+        :reasoning="currentIntent.reasoning" :need-human="currentIntent.need_human" :label="currentIntent.label"
+        :color="currentIntent.color" @transfer-to-human="onTransferToHuman" @dismiss-warning="onDismissIntent" />
       <MessageList :messages="messages" @select-action="handleSelectAction" @select-source="onSelectSource" />
       <p v-if="errorMessage" class="error-tip">{{ errorMessage }}</p>
       <ChatInput :loading="loading" @send="handleSend" />
@@ -151,6 +205,70 @@ function handleSelectAction(action: string) {
   display: flex;
   flex-direction: column;
   flex: 1;
+}
+
+/* 低置信度转人工横幅 */
+.intent-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: #fef3c7;
+  border-bottom: 2px solid #f59e0b;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.banner-icon {
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.banner-text {
+  flex: 1;
+  color: #92400e;
+  line-height: 1.4;
+}
+
+.banner-btn {
+  padding: 5px 14px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background: #fff;
+  font-size: 12px;
+  cursor: pointer;
+  color: #374151;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.banner-btn:hover {
+  background: #f3f4f6;
+}
+
+.banner-btn.primary {
+  background: #dc2626;
+  color: #fff;
+  border-color: #dc2626;
+}
+
+.banner-btn.primary:hover {
+  background: #b91c1c;
+}
+
+.banner-close {
+  background: none;
+  border: none;
+  font-size: 16px;
+  color: #92400e;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.banner-close:hover {
+  background: #fde68a;
 }
 
 .error-tip {
