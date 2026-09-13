@@ -4,6 +4,8 @@ import OrderInfoCard from '../business/OrderInfoCard.vue'
 import TicketInfoCard from '../business/TicketInfoCard.vue'
 import UserInfoCard from '../business/UserInfoCard.vue'
 import RetrievalResultCard from '../rag/RetrievalResultCard.vue'
+import PaymentInfoCard from '../business/PaymentInfoCard.vue'
+import LogisticsInfoCard from '../business/LogisticsInfoCard.vue'
 
 const props = defineProps<{
     toolName: string
@@ -17,12 +19,14 @@ const component = computed(() => {
         query_ticket: TicketInfoCard,
         query_user: UserInfoCard,
         search_knowledge_base: RetrievalResultCard,
+        query_payment: PaymentInfoCard,
+        query_logistics: LogisticsInfoCard
     }
     return map[props.toolName] || null
 })
 
 const cardData = computed(() => {
-    // 知识库检索的返回结构是 { snippets: [...] }，直接传给 RetrievalResultCard 的 snippets prop，其他三个工具的返回结构本身就是对应卡片需要的 data prop，直接透传即可。
+    // 知识库检索返回的是 { snippets: [...] }，需要单独处理；其余工具的结果结构本身就是对应卡片需要的 data，直接透传。支付和物流也是这个分支。
     if (props.toolName === 'search_knowledge_base') {
         return { snippets: props.result?.snippets || [] }
     }

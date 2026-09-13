@@ -12,6 +12,8 @@ const ARG_LABEL: Record<string, string> = {
   query_ticket: '工单号',
   query_user: '用户 ID',
   search_knowledge_base: '检索关键词',
+  query_payment: '订单号',
+  query_logistics: '订单号',
 }
 
 </script>

@@ -13,6 +13,8 @@ from app.tools.knowledge_tool import search_knowledge_base
 from app.tools.order_tool import query_order
 from app.tools.ticket_tool import query_ticket
 from app.tools.user_tool import query_user
+from app.tools.logistics_tool import query_logistics
+from app.tools.payment_tool import query_payment
 
 _MODEL_NAME = os.getenv("CHAT_MODEL_NAME", "deepseek-ai/DeepSeek-V4-Pro")
 
@@ -27,7 +29,8 @@ _llm = ChatOpenAI(
 )
 
 # 结构化输出和工具调用不能共用同一个绑定后的模型实例，LangChain 官方文档在结构化输出一节特别提示过，预先 bind_tools 之后的模型不再支持叠加 with_structured_output，所以这里准备两个各司其职的模型实例，_llm_with_tools 只负责判断要不要调用工具、调用哪个工具，_structured_llm 只在拿到足够信息之后把自然语言整理成规定的 schema。
-_TOOLS = [query_order, search_knowledge_base, query_ticket, query_user]
+_TOOLS = [query_order, search_knowledge_base, query_ticket,
+          query_user, query_payment, query_logistics]
 _llm_with_tools = _llm.bind_tools(_TOOLS)
 
 # with_structured_output 默认（不传 include_raw）会直接返回校验通过的 ChatResponse 实例不需要自己再解析模型输出的原始文本，也不需要处理 include_raw=True 时才会出现的 {"raw","parsed","parsing_error"} 这种字典结构
@@ -47,6 +50,8 @@ _AGENT_SYSTEM_PROMPT = """你是一个企业客服 AI 助手，可以帮助客�
 如果用户提到了工单号或者想知道之前提交的工单处理进度，调用 query_ticket 查询。
 如果需要确认用户的身份、等级或者联系方式，调用 query_user 查询，用户 ID 通常需要先从对话里确认，不要凭空编造。
 如果用户的问题属于退款政策、发货时效、账号安全这类通用规则性问题，调用 search_knowledge_base 检索相关说明，不要凭记忆直接回答政策类问题。
+如果用户想确认某笔订单的支付方式、支付金额或支付时间，先通过用户自述或 query_ticket 返回结果拿到订单号，再调用 query_payment 查询真实流水，不要凭空猜测支付信息。
+如果用户询问包裹运输进度、质疑物流为什么没有更新，先拿到订单号再调用 query_logistics 查询轨迹节点，结合轨迹时间判断是否真的延迟，不要凭感觉推测物流状态。查询结果是空时如实告知用户暂无物流记录，而不是编造一段轨迹。
 以上工具可以在同一轮对话里按需要多次调用，不要凭空编造任何工具没有返回过的数据。
 
 ## 引用规范（重要）
