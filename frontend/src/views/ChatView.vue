@@ -1,15 +1,23 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { streamChatMessage, type AssistantMessage, type ChatMessage } from '../api/chat'
+import { onMounted, ref, watch } from 'vue'
+import {
+  streamChatMessage,
+  type AssistantMessage,
+  type ChatMessage,
+  type Intent,
+  type IntentData,
+  type SourceInfo,
+} from '../api/chat'
+import { fetchMessages, type SessionMessageItem } from '../api/sessions'
+import { useSessionStore } from '../stores/sessionStore'
 import { useTaskContext } from '../composables/useTaskContext'
 import MessageList from '../components/chat/MessageList.vue'
 import ChatInput from '../components/chat/ChatInput.vue'
+import SessionList from '../components/chat/SessionList.vue'
 import ContextPanel from '../components/context/ContextPanel.vue'
-import SourceList from '../components/rag/SourceList.vue'
 import SourceDrawer from '../components/rag/SourceDrawer.vue'
 import IntentResultCard from '../components/intent/IntentResultCard.vue'
 
-// intent 事件的类型定义和 api/chat.ts 里的 IntentData 保持一致
 interface IntentInfo {
   intent: string
   confidence: number
@@ -19,16 +27,8 @@ interface IntentInfo {
   color: string
 }
 
-interface SourceInfo {
-  index: number
-  filename: string
-  chunk_index: number
-  content: string
-  score: number
-  page?: number | null
-}
-
 const { recordToolCall } = useTaskContext()
+const sessionStore = useSessionStore()
 
 const messages = ref<ChatMessage[]>([])
 const loading = ref(false)
@@ -68,6 +68,62 @@ function onTransferToHuman() {
   // TODO Day 15：调用转人工接口，创建审批记录
 }
 
+// 历史消息还原，接口 schema 与界面 AssistantMessage 之间唯一的转换点
+function restoreMessages(items: SessionMessageItem[]): ChatMessage[] {
+  return items.map((item) => {
+    if (item.role === 'user') {
+      return { role: 'user', content: item.content }
+    }
+    return {
+      role: 'assistant',
+      intent: (item.intent as Intent | undefined) ?? 'general_inquiry',
+      answer: item.content,
+      confidence: item.confidence ?? 0,
+      needHuman: item.need_human ?? false,
+      suggestedActions: item.suggested_actions ?? [],
+      toolCalls: (item.tool_calls ?? []).map((call) => ({
+        name: call.name,
+        args: call.args,
+        result: call.result,
+        status: 'done' as const
+      })),
+      sources: item.sources && item.sources.length > 0 ? (item.sources as unknown as SourceInfo[]) : undefined,
+      pending: false
+    }
+  })
+}
+
+async function loadMessages(sessionId: string) {
+  errorMessage.value = ''
+  try {
+    const items = await fetchMessages(sessionId)
+    messages.value = restoreMessages(items)
+  } catch (error) {
+    messages.value = []
+    errorMessage.value = error instanceof Error ? error.message : '历史消息加载失败'
+  }
+}
+
+// 当前会话变化时重新加载历史，新建、切换、删除当前会话都会触发
+watch(
+  () => sessionStore.state.currentSessionId,
+  (newId, oldId) => {
+    if (!newId || newId === oldId) return
+    currentIntent.value = null
+    bannerDismissed.value = false
+    selectedSource.value = null
+    drawerVisible.value = false
+    void loadMessages(newId)
+  }
+)
+
+onMounted(async () => {
+  await sessionStore.initSessions()
+  if (sessionStore.state.currentSessionId) {
+    await loadMessages(sessionStore.state.currentSessionId)
+  }
+})
+
 function createPendingMessage(): AssistantMessage {
   return {
     role: 'assistant',
@@ -82,8 +138,13 @@ function createPendingMessage(): AssistantMessage {
 }
 
 async function handleSend(text: string) {
+  const sessionId = sessionStore.state.currentSessionId
+  if (!sessionId) {
+    errorMessage.value = '会话尚未准备好，请稍后重试'
+    return
+  }
   errorMessage.value = ''
-  currentIntent.value = null  // 新消息发出后重置意图状态
+  currentIntent.value = null
   bannerDismissed.value = false
   messages.value.push({ role: 'user', content: text })
 
@@ -92,7 +153,8 @@ async function handleSend(text: string) {
   loading.value = true
 
   try {
-    await streamChatMessage(messages.value.slice(0, -1), {
+    // 只传会话 ID 和当前一条，历史由后端从库里恢复，不再回传 messages 数组
+    await streamChatMessage(sessionId, text, {
       onToolCallStart(name, args) {
         const label =
           name === 'search_knowledge_base'
@@ -100,7 +162,7 @@ async function handleSend(text: string) {
             : `正在调用 ${name}…`
         pendingMessage.toolCalls.push({ name, args, status: 'calling', label } as any)
       },
-      onToolCallEnd(name, args, result) {
+      onToolCallEnd(name, _args, result) {
         const target = pendingMessage.toolCalls.find(
           (call) => call.name === name && call.status === 'calling',
         )
@@ -108,8 +170,19 @@ async function handleSend(text: string) {
           target.status = 'done'
           target.result = result
         }
-        // 上下文面板要跨越整个会话持续展示最新的用户、订单、工单信息
-        recordToolCall(name, args, result)
+        recordToolCall(name, _args, result)
+      },
+      onIntent(data: IntentData) {
+        currentIntent.value = {
+          intent: data.intent,
+          confidence: data.confidence,
+          reasoning: data.reasoning,
+          need_human: data.need_human,
+          label: data.label,
+          color: data.color
+        }
+        // Day 11 的规则保持不变，明确要转人工且置信度较高时直接触发占位流程
+        if(data.intent==='transfer_human' && data.confidence>=0.7)
       },
       onFinal(finalMessage) {
         const index = messages.value.indexOf(pendingMessage)

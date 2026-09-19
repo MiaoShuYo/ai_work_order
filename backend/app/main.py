@@ -1,3 +1,10 @@
+from app.api.v1.sessions import router as session_router
+from app.api.v1.tickets import router as tickets_router
+from app.api.v1.debug import router as debug_router
+from app.api.v1.documents import router as documents_router
+from app.api.v1.chat import router as chat_router
+from app.db.session import SessionLocal
+from app.db.seed import seed_initial_data
 import uvicorn
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI
@@ -7,13 +14,6 @@ from contextlib import asynccontextmanager
 # load_dotenv 必须在任何导入自己模块（如 llm_client）之前运行，
 # 因为 llm_client 在模块加载时就会读取环境变量来初始化 ChatOpenAI。
 load_dotenv()
-
-from app.db.seed import seed_initial_data
-from app.db.session import SessionLocal
-from app.api.v1.chat import router as chat_router
-from app.api.v1.documents import router as documents_router
-from app.api.v1.debug import router as debug_router
-from app.api.v1.tickets import router as tickets_router
 
 
 @asynccontextmanager
@@ -40,6 +40,7 @@ app.include_router(chat_router, prefix="/api/v1")
 app.include_router(documents_router)
 app.include_router(debug_router)
 app.include_router(tickets_router)
+app.include_router(session_router)
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8080)

@@ -15,6 +15,10 @@ from app.tools.ticket_tool import query_ticket
 from app.tools.user_tool import query_user
 from app.tools.logistics_tool import query_logistics
 from app.tools.payment_tool import query_payment
+from app.agents.title_agent import generate_title
+from app.db.session import SessionLocal
+from app.repositories.session_repository import SessionRepository
+from app.services.memory_service import ConversationMemory
 
 _MODEL_NAME = os.getenv("CHAT_MODEL_NAME", "deepseek-ai/DeepSeek-V4-Pro")
 
@@ -85,36 +89,45 @@ def _to_langchain_messages(messages: list[dict[str, str]]) -> list[BaseMessage]:
             ]
 
 
-async def stream_chat(messages: list[dict[str, str]], conversation_id: str = "") -> AsyncGenerator[dict, None]:
-    """
-    流式处理一轮对话。每次调用首先对用户最新消息做意图识别，通过 intent 事件发送给前端，再将意图信息注入系统消息供 Agent 调整策略。
-    """
-    # 提取用户最新一条消息用于意图识别
-    last_user_message = ""
-    for msg in reversed(messages):
-        if msg.get("role") == "user":
-            last_user_message = msg.get("content", "")
-            break
+async def stream_chat(session_id: str, message: str) -> AsyncGenerator[dict, None]:
+    """处理一轮对话并把完整过程落库。
 
-    # ① 意图识别：在 Agent 开始处理之前先判断用户想干什么
-    intent_result: IntentResult | None = None
-    if last_user_message.strip():
-        try:
-            intent_result = await classify_intent(last_user_message)
-            # 如果置信度低于阈值，标记需要转人工
-            if intent_result.confidence < _CONFIDENCE_THRESHOLD:
-                intent_result.need_human = True
-        except Exception:
-            # 意图识别失败不影响主流程，降级为未知意图，Agent 按通用规则处理
-            intent_result = IntentResult(
-                intent="knowledge_qa",
-                confidence=0.0,
-                reasoning="意图识别调用失败，降级为通用知识问答模式",
-                need_human=False
-            )
+    时序是，用户消息先持久化，意图识别照旧前置，历史窗口由短期记忆从库里
+    裁剪恢复，工具调用循环结束后把结构化回答连同意图、工具记录、引用来源
+    写入消息表，再回填工单关联和自动标题，最后推送 session_meta 事件。
+    """
+    db = SessionLocal()
+    try:
+        repository = SessionRepository(db)
+        memory = ConversationMemory(repository)
 
-        # 通过 SSE 事件把意图结果发给前端
-        if intent_result:
+        session = repository.get_session(session_id)
+        if session is None:
+            # 路由层已拦过一次，这里防的是请求处理途中会话被并发删除
+            yield {"type": "error", "message": f"会话 {session_id} 不存在或已被删除"}
+            return
+        thread_id = session.thread_id
+
+        # 用户消息最先落库，后续任何模型调用失败，客服的提问都已经保住
+        repository.append_message(
+            session_id=session_id, thread_id=thread_id, role="user", content=message
+        )
+        repository.touch(session_id)
+
+        # 意图识别，逻辑与 Day 11 一致，输入从"历史里最后一条 user"简化为入参 message
+        intent_result: IntentResult | None = None
+        if message.strip():
+            try:
+                intent_result = await classify_intent(message)
+                if intent_result.confidence < _CONFIDENCE_THRESHOLD:
+                    intent_result.need_human = True
+            except Exception:
+                intent_result = IntentResult(
+                    intent="knowledge_qa",
+                    confidence=0.0,
+                    reasoning="意图识别调用失败，降级为通用知识问答模式",
+                    need_human=False,
+                )
             yield {
                 "type": "intent",
                 "data": {
@@ -127,103 +140,142 @@ async def stream_chat(messages: list[dict[str, str]], conversation_id: str = "")
                 },
             }
 
-    # ② 构建消息列表，如果有意图识别结果，作为系统消息注入
-    intent_hint = ""
-    if intent_result:
-        intent_label = INTENT_LABELS.get(intent_result.intent, {}).get(
-            "label", intent_result.intent)
-        intent_hint = (
-            f"[系统提示] 本次对话的意图识别结果：{intent_label}（置信度：{intent_result.confidence:.0%}）。"
-            f"判断依据：{intent_result.reasoning}"
-        )
-        if intent_result.need_human:
-            intent_hint += " 注意：置信度较低，如果无法给出确定的回答，请主动建议用户转接人工客服。"
+        intent_hint = ""
+        if intent_result:
+            intent_label = INTENT_LABELS.get(intent_result.intent, {}).get(
+                "label", intent_result.intent
+            )
+            intent_hint = (
+                f"[系统提示] 本次对话的意图识别结果：{intent_label}"
+                f"（置信度：{intent_result.confidence:.0%}）。判断依据：{intent_result.reasoning}"
+            )
+            if intent_result.need_human:
+                intent_hint += " 注意：置信度较低，如果无法给出确定的回答，请主动建议用户转接人工客服。"
 
-    full_messages = [SystemMessage(content=_AGENT_SYSTEM_PROMPT)]
-    if intent_hint:
-        full_messages.append(SystemMessage(content=intent_hint))
-    full_messages.extend(list(messages))
+        # 历史窗口从数据库恢复并裁剪，刚落库的用户消息也在里面，不再手动追加
+        context_messages = memory.load_context(thread_id)
 
-    # 收集本轮对话中知识库检索返回的所有片段，用于最终生成 sources事件
-    collected_sources: list[SourceInfo] = []
-    # 收集本轮对话中所有工具调用的记录，最终挂到 ChatResponse.tool_calls 上让前端展示
-    collected_tool_calls: list[ToolCallResult] = []
+        history: list[BaseMessage] = [
+            SystemMessage(content=_AGENT_SYSTEM_PROMPT)]
+        if intent_hint:
+            history.append(SystemMessage(content=intent_hint))
+        history.extend(context_messages)
 
-    # ③ 进入工具调用循环
-    iteration = 0
-    while iteration < _MAX_TOOL_ITERATIONS:
-        iteration += 1
-        response: AIMessage = await _llm_with_tools.ainvoke(full_messages)
+        collected_sources: list[SourceInfo] = []
+        collected_tool_calls: list[ToolCallResult] = []
 
-        if not response.tool_calls:
-            # 没有工具调用，生成最终回答
-            final_response: ChatResponse = await _structured_llm.ainvoke(full_messages)
-            final_response.tool_calls = collected_tool_calls
+        iteration = 0
+        while iteration < _MAX_TOOL_ITERATIONS:
+            iteration += 1
+            ai_message = await _llm_with_tools.ainvoke(history)
 
-            yield {"type": "final", "data": final_response.model_dump()}
+            if not ai_message.tool_calls:
+                break
 
-            # 如果有收集到知识库来源，在 final 之后紧跟着发送 sources 事件
-            if collected_sources:
-                yield {
-                    "type": "sources",
-                    "data": {
-                        "conversation_id": conversation_id,
-                        "sources": [s.model_dump() for s in collected_sources]
-                    },
-                }
-            return
-        # 处理工具调用
-        full_messages.append(response)
-        for tool_call in response.tool_calls:
-            name = tool_call["name"]
-            args = tool_call["args"]
-            tool_func = _TOOLS_BY_NAME.get(name)
-            if tool_func is None:
-                continue
+            history.append(ai_message)
+            for tool_call in ai_message.tool_calls:
+                tool_name = tool_call["name"]
+                tool_args = tool_call["args"]
+                yield {"type": "tool_call_start", "name": tool_name, "args": tool_args}
 
-            yield {"type": "tool_call_start", "name": name, "args": args}
+                tool = _TOOLS_BY_NAME.get(tool_name)
+                tool_result = await tool.ainvoke(tool_args)
 
-            result = tool_func.invoke(args)
-            yield {"type": "tool_call_end", "name": name, "result": result}
-
-            full_messages.append(
-                ToolMessage(
-                    content=json.dumps(result, ensure_ascii=False),
-                    tool_call_id=tool_call["id"]
+                yield {"type": "tool_call_end", "name": tool_name, "result": tool_result}
+                collected_tool_calls.append(
+                    ToolCallResult(
+                        name=tool_name, args=tool_args, result=tool_result)
                 )
-            )
-            collected_tool_calls.append(
-                ToolCallResult(name=name, args=args, result=result)
-            )
-
-            # 如果是知识库检索，把返回的片段收集起来
-            if name == "search_knowledge_base" and isinstance(result, dict):
-                for snippet in result.get("snippets", []):
-                    collected_sources.append(
-                        SourceInfo(
-                            index=snippet["index"],
-                            filename=snippet["filename"],
-                            chunk_index=snippet["chunk_index"],
-                            content=snippet["content"],
-                            score=snippet["score"],
-                            page=snippet.get("page")
-                        )
+                history.append(
+                    ToolMessage(
+                        content=json.dumps(tool_result, ensure_ascii=False),
+                        tool_call_id=tool_call["id"],
                     )
-    # 超出最大迭代次数，强制生成回答
-    full_messages.append(
-        SystemMessage(content="已达到最大工具调用次数，请基于目前已有的信息直接给出结论。")
-    )
+                )
 
-    final_response: ChatResponse = await _structured_llm.ainvoke(full_messages)
-    final_response.tool_calls = collected_tool_calls
+                if tool_name == "search_knowledge_base" and isinstance(tool_result, dict):
+                    for snippet in tool_result.get("snippets", []):
+                        collected_sources.append(
+                            SourceInfo(
+                                index=snippet["index"],
+                                filename=snippet["filename"],
+                                chunk_index=snippet["chunk_index"],
+                                content=snippet["content"],
+                                score=snippet["score"],
+                                page=snippet.get("page"),
+                            )
+                        )
+        else:
+            history.append(
+                SystemMessage(content="已达到最大工具调用次数，请基于目前已有的信息直接给出结论。")
+            )
 
-    yield {"type": "final", "data": final_response.model_dump()}
+        final_response: ChatResponse = await _structured_llm.ainvoke(history)
+        final_response.tool_calls = collected_tool_calls
+        yield {"type": "final", "data": final_response.model_dump()}
 
-    if collected_sources:
+        if collected_sources:
+            yield {
+                "type": "sources",
+                "data": {
+                    # conversation_id 从今天起填真实的记忆线程 ID，前端可据此定位会话
+                    "conversation_id": thread_id,
+                    "sources": [source.model_dump() for source in collected_sources],
+                },
+            }
+
+        # AI 回答连同完整链路信息落库，Day 12 详情页缺的"AI 分析结果"以后从这里取
+        extra = {
+            "intent": final_response.intent,
+            "confidence": final_response.confidence,
+            "need_human": final_response.need_human,
+            "suggested_actions": final_response.suggested_actions,
+            "tool_calls": [call.model_dump() for call in collected_tool_calls],
+            "sources": [source.model_dump() for source in collected_sources],
+            "task_intent": intent_result.model_dump() if intent_result else None,
+        }
+        repository.append_message(
+            session_id=session_id,
+            thread_id=thread_id,
+            role="assistant",
+            content=final_response.answer,
+            extra=extra,
+        )
+
+        # Agent 成功查过工单就把会话关联到这张工单，供工单详情页反查处理过程
+        linked_ticket_no = session.ticket_no
+        if not linked_ticket_no:
+            for call in collected_tool_calls:
+                if (
+                    call.name == "query_ticket"
+                    and isinstance(call.result, dict)
+                    and "error" not in call.result
+                ):
+                    linked_ticket_no = str(call.args.get("ticket_no") or "")
+                    break
+        if linked_ticket_no and linked_ticket_no != session.ticket_no:
+            repository.link_ticket(session_id, linked_ticket_no)
+
+        # 首轮对话结束后生成标题，任何失败都退化为首条消息截断，不影响主链路
+        latest_title = session.title
+        if session.title == "新会话":
+            try:
+                latest_title = await generate_title(message)
+            except Exception:
+                latest_title = message.strip()[:12] or "新会话"
+            repository.update_title(session_id, latest_title)
+
+        repository.touch(session_id)
         yield {
-            "type": "sources",
+            "type": "session_meta",
             "data": {
-                "conversation_id": conversation_id,
-                "sources": [s.model_dump() for s in collected_sources],
+                "session_id": session_id,
+                "title": latest_title,
+                "ticket_no": linked_ticket_no,
             },
         }
+    except Exception as exc:
+        # 用户消息已经落库，这里只保证错误能以事件形式到达前端，不追加伪造的 AI 消息
+        yield {"type": "error", "message": str(exc)}
+    finally:
+        db.close()

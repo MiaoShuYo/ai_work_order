@@ -1,176 +1,184 @@
-import http from './http'
-
-export type Intent = 'order_issue' | 'account_issue' | 'refund_request' | 'general_inquiry' | 'other'
+export type Intent =
+  | 'order_issue'
+  | 'account_issue'
+  | 'refund_request'
+  | 'general_inquiry'
+  | 'other'
 
 export interface UserMessage {
-    role: 'user',
-    content: string
+  role: 'user'
+  content: string
 }
 
 export interface ToolCall {
-    name: string,
-    args: Record<string, unknown>,
-    result?: Record<string, unknown>
-    status: 'calling' | 'done'
+  name: string
+  args: Record<string, unknown>
+  result?: Record<string, unknown>
+  status: 'calling' | 'done'
+}
+
+export interface SourceInfo {
+  index: number
+  filename: string
+  chunk_index: number
+  content: string
+  score: number
+  page?: number | null
 }
 
 export interface AssistantMessage {
-    role: 'assistant',
-    intent: Intent,
-    answer: string,
-    confidence: number
-    needHuman: boolean
-    suggestedActions: string[]
-    toolCalls: ToolCall[]
-    pending?: boolean
+  role: 'assistant'
+  intent: Intent
+  answer: string
+  confidence: number
+  needHuman: boolean
+  suggestedActions: string[]
+  toolCalls: ToolCall[]
+  pending?: boolean
+  sources?: SourceInfo[]
 }
 
 export type ChatMessage = UserMessage | AssistantMessage
 
-export interface ChatResponseDto {
-    intent: Intent,
-    answer: string,
-    confidence: number
-    need_human: boolean
-    suggested_actions: string[]
-    tool_calls: {
-        name: string;
-        args: Record<string, unknown>;
-        result: Record<string, unknown>
-    }[]
+// final 事件的载荷是后端 Pydantic 模型序列化的结果，字段仍是 Day 3 起约定的 snake_case，
+// 这里保留一个 DTO 类型，在 switch 里做一次集中转换，组件层只接触 camelCase。
+interface ChatResponseDto {
+  intent: Intent
+  answer: string
+  confidence: number
+  need_human: boolean
+  suggested_actions: string[]
+  tool_calls: { name: string; args: Record<string, unknown>; result: Record<string, unknown> }[]
 }
 
 export interface IntentData {
-    intent: string
-    confidence: number
-    reasoning: string
-    need_human: boolean
-    label: string
-    color: string
+  intent: string
+  confidence: number
+  reasoning: string
+  need_human: boolean
+  label: string
+  color: string
 }
 
-// 发给后端的历史消息里，AI 消息只需要还原成一段文本，后端目前只有 content 字段拼接对话上下文。不关心当时判断出的 intent 和置信度这些衍生字段
-function toApiMessage(message: ChatMessage): {
-    role: 'user' | 'assistant'; content: string
-} {
-    if (message.role === 'user') {
-        return { role: 'user', content: message.content }
-    } else {
-        return { role: 'assistant', content: message.answer }
-    }
+export interface SessionMetaData {
+  session_id: string
+  title: string
+  ticket_no: string | null
 }
 
 interface StreamHandlers {
-    onToolCallStart: (
-        name: string,
-        args: Record<string, unknown>
-    ) => void
-    onToolCallEnd: (
-        name: string,
-        args: Record<string, unknown>,
-        result: Record<string, unknown>
-    ) => void
-    onFinal: (
-        message: AssistantMessage
-    ) => void
-    onSources?: (data: {
-        conversation_id: string
-        sources: Array<{
-            index: number
-            filename: string
-            chunk_index: number
-            content: string
-            score: number
-            page?: number | null
-        }>
-    }) => void
-    onIntent?: (data: IntentData) => void
-    onError: (
-        message: string
-    ) => void
+  onToolCallStart: (name: string, args: Record<string, unknown>) => void
+  onToolCallEnd: (
+    name: string,
+    args: Record<string, unknown>,
+    result: Record<string, unknown>,
+  ) => void
+  onFinal: (message: AssistantMessage) => void
+  onSources?: (data: { conversation_id: string; sources: SourceInfo[] }) => void
+  onIntent?: (data: IntentData) => void
+  onSessionMeta?: (data: SessionMetaData) => void
+  onError: (message: string) => void
 }
 
-// 原生 EventSource 只能发送 GET 请求，没法带上完整的对话历史作为请求体，这里改为 fetch 拿到 ReadableStream 自己解析 SSE 格式。本质上和 EventSource 做的事情一样，只是把发起请求和解析事件流两件事都自己接管。
+interface SseEvent {
+  event: string
+  // 事件数据结构随事件类型变化，解析层不做强类型约束，由各 handler 自己收口
+  data: any
+}
 
-export async function streamChatMessage(history: ChatMessage[], handlers: StreamHandlers): Promise<void> {
-    const payload = {
-        messages: history.map(toApiMessage)
-    }
-    const response = await fetch('/api/v1/chat', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(payload)
+function parseSseBuffer(buffer: string): { events: SseEvent[]; remainder: string } {
+  const chunks = buffer.split('\n\n')
+  const remainder = chunks.pop() ?? ''
+  const events: SseEvent[] = []
+  for (const chunk of chunks) {
+    const lines = chunk.split('\n')
+    const eventLine = lines.find((line) => line.startsWith('event: '))
+    const dataLine = lines.find((line) => line.startsWith('data: '))
+    if (!eventLine || !dataLine) continue
+    events.push({
+      event: eventLine.slice('event: '.length),
+      data: JSON.parse(dataLine.slice('data: '.length)),
     })
+  }
+  return { events, remainder }
+}
 
-    if (!response.ok || !response.body) {
-        handlers.onError('请求发送失败，请稍后重试')
-        return
+export async function streamChatMessage(
+  sessionId: string,
+  message: string,
+  handlers: StreamHandlers,
+): Promise<void> {
+  let response: Response
+  try {
+    response = await fetch('/api/v1/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sessionId, message }),
+    })
+  } catch {
+    handlers.onError('网络异常，请稍后重试')
+    return
+  }
+
+  if (!response.ok || !response.body) {
+    // 开流之前的错误是标准 JSON 响应（例如会话不存在的 404），取出 detail 展示
+    let detail = '请求发送失败，请稍后重试'
+    try {
+      const body = await response.text()
+      detail = JSON.parse(body)?.detail ?? detail
+    } catch {
+      // 响应体不是 JSON，沿用通用提示
     }
+    handlers.onError(detail)
+    return
+  }
 
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder()
-    // SSE 事件块之间用连续两个换行符分割，但网络分片不保证一个 chunk 刚好落在事件边界上，所以要维护一个缓冲区，每次追加新内容后按分割符分割，切不完整的尾巴留到下一次 chunk 再拼。
-    let buffer = ''
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
 
-    function processBuffer(fullBuffer: string): string {
-        const events = fullBuffer.split('\n\n')
-        const remainder = events.pop() ?? ''
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const parsed = parseSseBuffer(buffer)
+    buffer = parsed.remainder
 
-        for (const rawEvent of events) {
-            const dataLine = rawEvent.split('\n').find((line) => line.startsWith('data: '))
-            if (!dataLine) {
-                continue
-            }
-
-            const event = JSON.parse(dataLine.slice('data: '.length))
-            switch (event.type) {
-                case 'tool_call_start':
-                    handlers.onToolCallStart(event.name, event.args)
-                    break
-                case 'tool_call_end':
-                    handlers.onToolCallEnd(event.name, event.args, event.result)
-                    break
-                case 'final': {
-                    const data = event.data as ChatResponseDto
-                    handlers.onFinal({
-                        role: 'assistant',
-                        intent: data.intent,
-                        answer: data.answer,
-                        confidence: data.confidence,
-                        needHuman: data.need_human,
-                        suggestedActions: data.suggested_actions,
-                        toolCalls: data.tool_calls.map((call) => ({
-                            ...call, status: 'done' as const
-                        }))
-                    })
-                    break
-                }
-                case 'sources':
-                    handlers.onSources?.(event.data)
-                    break
-                case 'intent':
-                    handlers.onIntent?.(event.data)
-                    break
-                case 'error':
-                    handlers.onError(event.message)
-                    break
-            }
+    for (const event of parsed.events) {
+      switch (event.event) {
+        case 'tool_call_start':
+          handlers.onToolCallStart(event.data.name, event.data.args)
+          break
+        case 'tool_call_end':
+          handlers.onToolCallEnd(event.data.name, event.data.args, event.data.result)
+          break
+        case 'intent':
+          handlers.onIntent?.(event.data.data)
+          break
+        case 'final': {
+          // snake_case 到 camelCase 的映射收口在解析层，和 Day 4 引入流式接口时的处理保持一致
+          const data = event.data.data as ChatResponseDto
+          handlers.onFinal({
+            role: 'assistant',
+            intent: data.intent,
+            answer: data.answer,
+            confidence: data.confidence,
+            needHuman: data.need_human,
+            suggestedActions: data.suggested_actions,
+            toolCalls: data.tool_calls.map((call) => ({ ...call, status: 'done' as const })),
+          })
+          break
         }
-
-        return remainder
+        case 'sources':
+          handlers.onSources?.(event.data.data)
+          break
+        case 'session_meta':
+          handlers.onSessionMeta?.(event.data.data)
+          break
+        case 'error':
+          handlers.onError(event.data.message)
+          break
+      }
     }
-
-    while (true) {
-        const { done, value } = await reader.read()
-        if (done) {
-            // 流结束时处理缓冲区中可能残留的最后一个事件
-            processBuffer(buffer)
-            break
-        }
-
-        buffer += decoder.decode(value, { stream: true })
-        buffer = processBuffer(buffer)
-    }
+  }
 }

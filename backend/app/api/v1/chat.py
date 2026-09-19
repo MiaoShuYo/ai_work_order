@@ -1,9 +1,12 @@
 import json
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
 
 from app.agents.llm_client import stream_chat
+from app.db.session import get_db
+from app.repositories.session_repository import SessionRepository
 from app.schemas.chat import ChatRequest
 
 router = APIRouter()
@@ -19,6 +22,14 @@ async def _to_sse(messages: list[dict[str, str]]):
 
 
 @router.post("/chat")
-async def send_message(request: ChatRequest) -> StreamingResponse:
-    payload = [message.model_dump() for message in request.messages]
-    return StreamingResponse(_to_sse(payload), media_type="text/event-stream")
+async def send_message(
+    request: ChatRequest, db: Session = Depends(get_db)
+) -> StreamingResponse:
+    # 会话不存在时在 SSE 响应头发送之前直接 404，前端能拿到标准 JSON 错误体
+    if SessionRepository(db).get_session(request.session_id) is None:
+        raise HTTPException(
+            status_code=404, detail=f"会话 {request.session_id} 不存在")
+    return StreamingResponse(
+        _to_sse(request.session_id, request.message),
+        media_type="text/event-stream"
+    )

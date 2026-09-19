@@ -5,6 +5,8 @@ from app.models.payment import PaymentModel
 from app.models.order import OrderModel
 from app.models.ticket import TicketModel
 from app.models.user import UserModel
+from app.models.chat_session import ChatSessionModel
+from app.models.chat_message import ChatMessageModel
 
 
 def seed_initial_data(db: Session) -> None:
@@ -22,11 +24,13 @@ def seed_initial_data(db: Session) -> None:
             ]
         )
 
-    if db.query(UserModel).count()==0:
+    if db.query(UserModel).count() == 0:
         db.add_all(
             [
-                UserModel(user_id="U10001", name="张伟", level="VIP", phone="138****5566"),
-                UserModel(user_id="U10002", name="李娜", level="普通", phone="139****2233"),
+                UserModel(user_id="U10001", name="张伟",
+                          level="VIP", phone="138****5566"),
+                UserModel(user_id="U10002", name="李娜",
+                          level="普通", phone="139****2233"),
             ]
         )
 
@@ -77,7 +81,8 @@ def seed_initial_data(db: Session) -> None:
                 ("T20260701001", "U10001", "202606050002"),
                 ("T20260702002", "U10002", None),
             ]:
-                ticket = db.query(TicketModel).filter(TicketModel.ticket_no == ticket_no).first()
+                ticket = db.query(TicketModel).filter(
+                    TicketModel.ticket_no == ticket_no).first()
                 if ticket is not None:
                     ticket.user_id = user_id
                     ticket.order_no = order_no
@@ -132,6 +137,61 @@ def seed_initial_data(db: Session) -> None:
                     time="2026-06-05 21:30:00",
                     location="杭州转运中心",
                     description="快件已装车，发往【上海转运中心】",
+                ),
+            ]
+        )
+
+    if db.query(ChatSessionModel).count() == 0:
+        demo_session = ChatSessionModel(
+            session_id="demo-session-0001",
+            thread_id="demo-thread-0001",
+            title="订单发货延迟咨询",
+            ticket_no=None,
+            created_at="2026-07-05 09:30:00",
+            updated_at="2026-07-05 09:30:00"
+        )
+        db.add(demo_session)
+        db.add_all(
+            [
+                ChatMessageModel(
+                    session_id="demo-session-0001",
+                    thread_id="demo-thread-0001",
+                    seq_no=1,
+                    role="user",
+                    content="你好，我有个订单一直没收到，能帮我看看吗？",
+                    extra=None,
+                    created_at="2026-07-05 09:30:00",
+                ),
+                ChatMessageModel(
+                    session_id="demo-session-0001",
+                    thread_id="demo-thread-0001",
+                    seq_no=2,
+                    role="assistant",
+                    content="您好，请提供一下订单号，我帮您查询物流状态。",
+                    extra=None,
+                    created_at="2026-07-05 09:30:20",
+                ),
+                ChatMessageModel(
+                    session_id="demo-session-0001",
+                    thread_id="demo-thread-0001",
+                    seq_no=3,
+                    role="user",
+                    content="订单号是 202606050002",
+                    extra=None,
+                    created_at="2026-07-05 09:31:40",
+                ),
+                ChatMessageModel(
+                    session_id="demo-session-0001",
+                    thread_id="demo-thread-0001",
+                    seq_no=4,
+                    role="assistant",
+                    content=(
+                        "已为您查询到订单 202606050002 状态为已发货、已出库，"
+                        "物流最新轨迹停留在 6 月 5 日晚从杭州转运中心发往上海转运中心，"
+                        "确实存在运输停滞，建议联系承运商核实干线运输情况。"
+                    ),
+                    extra=None,
+                    created_at="2026-07-05 09:32:00",
                 ),
             ]
         )
