@@ -34,11 +34,9 @@ const messages = ref<ChatMessage[]>([])
 const loading = ref(false)
 const errorMessage = ref('')
 
-// 意图识别相关状态
 const currentIntent = ref<IntentInfo | null>(null)
-const bannerDismissed = ref(false)  // 顶部转人工横幅的关闭状态
+const bannerDismissed = ref(false)
 
-// 引用来源抽屉的状态
 const drawerVisible = ref(false)
 const selectedSource = ref<SourceInfo | null>(null)
 
@@ -52,17 +50,14 @@ function onCloseDrawer() {
   selectedSource.value = null
 }
 
-// 关闭意图卡片（不影响顶部横幅）
 function onDismissIntent() {
   currentIntent.value = null
 }
 
-// 关闭顶部横幅
 function onDismissBanner() {
   bannerDismissed.value = true
 }
 
-// 转人工操作：目前为占位实现，记录到控制台，Day 15 对接审批流程后替换为正式接口调用
 function onTransferToHuman() {
   console.log('[Intent] 用户确认转人工，当前意图：', currentIntent.value)
   // TODO Day 15：调用转人工接口，创建审批记录
@@ -85,10 +80,13 @@ function restoreMessages(items: SessionMessageItem[]): ChatMessage[] {
         name: call.name,
         args: call.args,
         result: call.result,
-        status: 'done' as const
+        status: 'done' as const,
       })),
-      sources: item.sources && item.sources.length > 0 ? (item.sources as unknown as SourceInfo[]) : undefined,
-      pending: false
+      sources:
+        item.sources && item.sources.length > 0
+          ? (item.sources as unknown as SourceInfo[])
+          : undefined,
+      pending: false,
     }
   })
 }
@@ -114,7 +112,7 @@ watch(
     selectedSource.value = null
     drawerVisible.value = false
     void loadMessages(newId)
-  }
+  },
 )
 
 onMounted(async () => {
@@ -143,6 +141,7 @@ async function handleSend(text: string) {
     errorMessage.value = '会话尚未准备好，请稍后重试'
     return
   }
+
   errorMessage.value = ''
   currentIntent.value = null
   bannerDismissed.value = false
@@ -157,9 +156,7 @@ async function handleSend(text: string) {
     await streamChatMessage(sessionId, text, {
       onToolCallStart(name, args) {
         const label =
-          name === 'search_knowledge_base'
-            ? '正在检索知识库…'
-            : `正在调用 ${name}…`
+          name === 'search_knowledge_base' ? '正在检索知识库…' : `正在调用 ${name}…`
         pendingMessage.toolCalls.push({ name, args, status: 'calling', label } as any)
       },
       onToolCallEnd(name, _args, result) {
@@ -179,10 +176,12 @@ async function handleSend(text: string) {
           reasoning: data.reasoning,
           need_human: data.need_human,
           label: data.label,
-          color: data.color
+          color: data.color,
         }
         // Day 11 的规则保持不变，明确要转人工且置信度较高时直接触发占位流程
-        if(data.intent==='transfer_human' && data.confidence>=0.7)
+        if (data.intent === 'transfer_human' && data.confidence >= 0.7) {
+          onTransferToHuman()
+        }
       },
       onFinal(finalMessage) {
         const index = messages.value.indexOf(pendingMessage)
@@ -191,23 +190,23 @@ async function handleSend(text: string) {
         }
       },
       onSources(sourcesData) {
-        // sources 事件在 final 之后到达，挂到对应的 assistant 消息上
-        const lastAssistantMsg = [...messages.value].reverse().find(
-          (m) => m.role === 'assistant',
-        )
-        if (lastAssistantMsg) {
-          ; (lastAssistantMsg as any).sources = sourcesData.sources
+        const lastAssistant = [...messages.value]
+          .reverse()
+          .find((message) => message.role === 'assistant')
+        if (lastAssistant) {
+          ; (lastAssistant as AssistantMessage).sources = sourcesData.sources
         }
       },
-      onIntent(IntentData) {
-        // 意图识别结果到达，更新响应式状态驱动 UI 渲染
-        currentIntent.value = IntentData
-        // 如果是转人工意图且置信度较高，自动触发转人工流程
-        if (IntentData.intent === 'transfer_human' && IntentData.confidence >= 0.7) {
-          onTransferToHuman()
-        }
+      onSessionMeta(meta) {
+        // 标题和工单关联回填到左侧列表，列表项会从"新会话"实时变成真实标题
+        sessionStore.patchSessionMeta(meta.session_id, {
+          title: meta.title,
+          ticket_no: meta.ticket_no,
+        })
       },
       onError(message) {
+        // 错误处理沿用 Day 11 的行为，只展示错误文案不移除消息。
+        // 区别是用户消息此刻已经落库，切换会话再切回来会以历史消息重现。
         errorMessage.value = message
       },
     })
@@ -225,9 +224,9 @@ function handleSelectAction(action: string) {
 
 <template>
   <div class="chat-view">
-    <aside class="session-sidebar">
-      <div class="session-item active">默认会话</div>
-    </aside>
+    <!-- Day 2 起写死的默认会话栏，今天替换为真正的会话列表组件 -->
+    <SessionList :disabled="loading" />
+
     <section class="chat-main">
       <!-- 低置信度持续提示横幅：need_human 为 true 且未被关闭时显示 -->
       <div v-if="currentIntent?.need_human && !bannerDismissed" class="intent-banner">
@@ -238,16 +237,19 @@ function handleSelectAction(action: string) {
         <button class="banner-btn primary" @click="onTransferToHuman">转人工</button>
         <button class="banner-close" @click="onDismissBanner">✕</button>
       </div>
+
       <!-- 意图识别结果卡片：每次对话开始时展示，可手动关闭 -->
       <IntentResultCard v-if="currentIntent" :intent="currentIntent.intent" :confidence="currentIntent.confidence"
         :reasoning="currentIntent.reasoning" :need-human="currentIntent.need_human" :label="currentIntent.label"
         :color="currentIntent.color" @transfer-to-human="onTransferToHuman" @dismiss-warning="onDismissIntent" />
+
       <MessageList :messages="messages" @select-action="handleSelectAction" @select-source="onSelectSource" />
       <p v-if="errorMessage" class="error-tip">{{ errorMessage }}</p>
       <ChatInput :loading="loading" @send="handleSend" />
     </section>
+
     <ContextPanel />
-    <!-- 引用来源详情抽屉 -->
+
     <SourceDrawer :source="selectedSource" :visible="drawerVisible" @close="onCloseDrawer" />
   </div>
 </template>
@@ -256,22 +258,6 @@ function handleSelectAction(action: string) {
 .chat-view {
   display: flex;
   height: 100vh;
-}
-
-.session-sidebar {
-  width: 220px;
-  border-right: 1px solid #e5e7eb;
-  padding: 16px;
-}
-
-.session-item {
-  padding: 8px 12px;
-  border-radius: 6px;
-}
-
-.session-item.active {
-  background-color: #eff6ff;
-  color: #2563eb;
 }
 
 .chat-main {

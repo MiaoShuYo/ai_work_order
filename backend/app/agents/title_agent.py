@@ -23,7 +23,7 @@ _TITLE_SYSTEM_PROMPT = """你是会话标题生成器。根据用户的第一条
 不要输出标点符号、引号、书名号，不要加"关于""的问题""咨询一下"这类外壳，直接输出标题文本本身。"""
 
 
-async def generate_title(user_message: str) -> Str:
+async def generate_title(user_message: str) -> str:
     """
     把用户首条消息改写成短标题。调用方负责捕获异常并做截断降级。
     """

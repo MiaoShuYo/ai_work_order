@@ -12,11 +12,11 @@ from app.schemas.chat import ChatRequest
 router = APIRouter()
 
 
-async def _to_sse(messages: list[dict[str, str]]):
+async def _to_sse(session_id: str, message: str):
     """
     把 stream_chat 产出的事件字典逐个格式化成 SSE 要求的 event/data 文本块。
     """
-    async for event in stream_chat(messages):
+    async for event in stream_chat(session_id, message):
         event_type = event["type"]
         yield f"event: {event_type}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
 

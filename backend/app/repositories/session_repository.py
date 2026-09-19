@@ -116,6 +116,15 @@ class SessionRepository:
         self.db.commit()
         return message
 
+    def list_messages(self, session_id: str) -> list[ChatMessageModel]:
+        """会话恢复用，返回全量消息，时间正序。"""
+        return (
+            self.db.query(ChatMessageModel)
+            .filter(ChatMessageModel.session_id == session_id)
+            .order_by(ChatMessageModel.seq_no.asc())
+            .all()
+        )
+
     def list_context_messages(self, thread_id: str, limit: int) -> list[ChatMessageModel]:
         """
         模型上下文用，只取最近 limit 条。倒序取完再反转，保证喂给模型的消息仍然是时间正序，顺序乱了对话角色会对不上。

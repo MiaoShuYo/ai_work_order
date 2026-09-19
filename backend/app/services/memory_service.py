@@ -3,7 +3,7 @@ from app.repositories.session_repository import SessionRepository
 
 # 进模型上下文窗口的最大消息条数，对话超过这个长度后最早的消息不再进入上下文，
 # 但仍然完整保留在消息表里，会话恢复不受影响。线上按真实 token 用量调整这个值。
-_MAX_HISTORY_MESSAGES = int(os.getenv("CHAT_MAX_HISTORY_MESSAGES"), "20")
+_MAX_HISTORY_MESSAGES = int(os.getenv("CHAT_MAX_HISTORY_MESSAGES", "20"))
 
 
 class ConversationMemory:
